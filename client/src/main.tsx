@@ -3,11 +3,20 @@ import App from "./App";
 import "./index.css";
 import { AuthProvider } from "./contexts/AuthContext";
 import { CalendarProvider } from "./contexts/CalendarContext";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./lib/queryClient";
+import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 createRoot(document.getElementById("root")!).render(
-  <AuthProvider>
-    <CalendarProvider>
-      <App />
-    </CalendarProvider>
-  </AuthProvider>
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <AuthProvider>
+        <CalendarProvider>
+          <App />
+        </CalendarProvider>
+      </AuthProvider>
+    </TooltipProvider>
+    <Toaster />
+  </QueryClientProvider>
 );

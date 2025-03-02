@@ -1,7 +1,4 @@
 import { Switch, Route } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
 import Calendar from "@/pages/Calendar";
 import Projects from "@/pages/Projects";
@@ -9,8 +6,9 @@ import Assistant from "@/pages/Assistant";
 import Weather from "@/pages/Weather";
 import Header from "@/components/layout/Header";
 import { useAuth } from "./contexts/AuthContext";
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import ChatInterface from "./components/assistant/ChatInterface";
+import { Loader2 } from "lucide-react";
 
 function Router() {
   return (
@@ -35,7 +33,11 @@ function App() {
   }, [login, user]);
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    }>
       <div className="flex flex-col h-screen">
         <Header />
         <main className="flex-1 overflow-auto">
@@ -45,8 +47,7 @@ function App() {
         </main>
         <ChatInterface />
       </div>
-      <Toaster />
-    </QueryClientProvider>
+    </Suspense>
   );
 }
 

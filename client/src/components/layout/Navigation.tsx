@@ -1,4 +1,4 @@
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 
 interface NavLinkProps {
   href: string;
@@ -8,17 +8,16 @@ interface NavLinkProps {
 
 function NavLink({ href, active, children }: NavLinkProps) {
   return (
-    <Link href={href}>
-      <a
-        className={`${
-          active
-            ? "border-primary text-primary"
-            : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300"
-        } font-medium py-4 px-1 border-b-2`}
-      >
-        {children}
-      </a>
-    </Link>
+    <a
+      href={href}
+      className={`${
+        active
+          ? "border-primary text-primary"
+          : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300"
+      } font-medium py-4 px-1 border-b-2 cursor-pointer`}
+    >
+      {children}
+    </a>
   );
 }
 
