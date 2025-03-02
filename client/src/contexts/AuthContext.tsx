@@ -10,7 +10,13 @@ interface AuthContextType {
   logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// Create context with default values
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  isLoading: false,
+  login: async () => {}, // no-op implementation
+  logout: () => {},      // no-op implementation
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -51,17 +57,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [toast]);
 
+  // Create the context value object once to avoid unnecessary re-renders
+  const contextValue = {
+    user,
+    isLoading,
+    login,
+    logout
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+  return useContext(AuthContext);
 }

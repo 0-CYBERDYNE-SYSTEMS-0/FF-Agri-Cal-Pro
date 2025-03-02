@@ -17,7 +17,19 @@ interface CalendarContextType {
   formatCurrentMonthYear: () => string;
 }
 
-const CalendarContext = createContext<CalendarContextType | undefined>(undefined);
+// Create context with default values
+const CalendarContext = createContext<CalendarContextType>({
+  currentDate: new Date(),
+  view: "month",
+  events: [],
+  isLoading: false,
+  setCurrentDate: () => {},
+  setView: () => {},
+  goToToday: () => {},
+  goToPrev: () => {},
+  goToNext: () => {},
+  formatCurrentMonthYear: () => ""
+});
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -79,30 +91,27 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return formatDate(currentDate, { month: "long", year: "numeric" });
   }, [currentDate]);
 
+  // Create context value object to avoid unnecessary re-renders
+  const contextValue = {
+    currentDate,
+    view,
+    events,
+    isLoading,
+    setCurrentDate,
+    setView,
+    goToToday,
+    goToPrev,
+    goToNext,
+    formatCurrentMonthYear
+  };
+
   return (
-    <CalendarContext.Provider
-      value={{
-        currentDate,
-        view,
-        events,
-        isLoading,
-        setCurrentDate,
-        setView,
-        goToToday,
-        goToPrev,
-        goToNext,
-        formatCurrentMonthYear
-      }}
-    >
+    <CalendarContext.Provider value={contextValue}>
       {children}
     </CalendarContext.Provider>
   );
 }
 
 export function useCalendar() {
-  const context = useContext(CalendarContext);
-  if (context === undefined) {
-    throw new Error("useCalendar must be used within a CalendarProvider");
-  }
-  return context;
+  return useContext(CalendarContext);
 }
