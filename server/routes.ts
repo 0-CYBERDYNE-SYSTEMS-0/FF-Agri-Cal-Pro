@@ -309,19 +309,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Add user message
       const updatedMessages = [
-        ...conversation.messages,
+        ...(Array.isArray(conversation.messages) ? conversation.messages : []),
         { role: "user", content: message }
       ];
       
-      // Mock AI response - in a real app, this would come from OpenAI API
-      const aiResponse = "I've processed your message and will help with your agricultural planning needs. Is there anything specific you'd like to know about crop schedules or weather implications?";
+      // Get AI response from OpenAI API
+      const OpenAI = await import("openai");
+      const openai = new OpenAI.default({
+        apiKey: process.env.OPENAI_API_KEY
+      });
       
-      // Add AI response
+      // Make sure there's a system message defining the assistant's role
+      if (!updatedMessages.some(msg => msg.role === "system")) {
+        updatedMessages.unshift({
+          role: "system",
+          content: `You are an agricultural planning assistant. Help the user with their agricultural calendar, planning, and provide advice based on their location and weather conditions. Current date is ${new Date().toLocaleDateString()}.`
+        });
+      }
+      
+      // Convert messages to the format expected by OpenAI
+      const apiMessages = updatedMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+      
+      // Call OpenAI API
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: apiMessages,
+        temperature: 0.7,
+        max_tokens: 500
+      });
+      
+      // Get AI response
+      const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
+      
+      // Add AI response to conversation
       updatedMessages.push({ role: "assistant", content: aiResponse });
       
       const updatedConversation = await storage.updateConversation(id, updatedMessages);
       return res.status(200).json(updatedConversation);
     } catch (err) {
+      console.error("OpenAI API Error:", err);
       return handleApiError(err, res);
     }
   });
