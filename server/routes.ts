@@ -382,7 +382,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedMessages.some(msg => msg.role === "system")) {
         updatedMessages.unshift({
           role: "system",
-          content: "You are an Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
+          content: "You are Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
           "Current date: " + new Date().toLocaleDateString() + "\n\n" +
           "Your responsibilities:\n" +
           "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +
@@ -391,7 +391,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "4. Offer recommendations for dealing with various weather conditions and climate challenges\n" +
           "5. Assist with pest management and soil health optimization\n" +
           "6. Provide advice on water conservation and irrigation planning\n\n" +
-          "Use your web search function to get up-to-date information when needed, especially for specific agricultural data, seasonal information, or regional farming practices.\n\n" +
+          "AVAILABLE TOOLS:\n" +
+          "1. Web Search: Use the search_web function to find up-to-date information when needed, especially for specific agricultural data, seasonal information, or regional farming practices.\n" +
+          "2. Weather Tool: Use the get_weather function to get real-time weather data and agricultural recommendations for a specific location. This helps provide location-specific advice based on current and forecasted weather conditions.\n\n" +
           "FORMATTING INSTRUCTIONS:\n" +
           "- Format your responses using Markdown to improve readability\n" +
           "- Use headers (## and ###) to organize information\n" +
@@ -410,7 +412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         content: msg.content
       }));
       
-      // Define function for web search
+      // Define tools for web search and weather data
       const tools = [
         {
           type: "function" as const,
@@ -426,6 +428,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
               },
               required: ["query"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "get_weather",
+            description: "Get weather information for a specific location to provide agriculture-specific recommendations",
+            parameters: {
+              type: "object",
+              properties: {
+                location: {
+                  type: "string",
+                  description: "The location (city, region, country) to get weather data for. Be specific for better results."
+                }
+              },
+              required: ["location"]
             }
           }
         }
@@ -469,66 +488,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Handle function calling if the model wants to search the web
+      // Handle function calling if the model calls a tool
       if (response.choices[0].message.tool_calls && response.choices[0].message.tool_calls.length > 0) {
         const toolCall = response.choices[0].message.tool_calls[0];
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
         
-        if (toolCall.function.name === "search_web") {
-          // Parse the function arguments
-          const functionArgs = JSON.parse(toolCall.function.arguments);
+        // Add the assistant's tool call message to the conversation
+        updatedMessages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall]
+        } as any);
+
+        // Add the assistant message with tool_calls to apiMessages
+        (apiMessages as any).push({
+          role: "assistant",
+          content: null, 
+          tool_calls: [{
+            id: toolCall.id,
+            type: "function",
+            function: {
+              name: functionName,
+              arguments: toolCall.function.arguments
+            }
+          }]
+        });
+        
+        let toolResponse = "";
+        
+        // Handle different tool types
+        if (functionName === "search_web") {
           const searchQuery = functionArgs.query;
-          
           console.log("Performing web search for query:", searchQuery);
           
-          // Execute the web search
-          const searchResults = await searchWeb({ query: searchQuery });
-          
-          // Add the assistant's tool call message to the conversation
+          // Add a visible message to the user about the search
           updatedMessages.push({
             role: "assistant",
             content: `I'll search for information about: ${searchQuery}`
           });
           
-          // Add the tool response to the messages as OpenAI expects
-          // First add the assistant message with tool_calls
-          // We need to use 'as any' to bypass TypeScript's type checking because the Message type
-          // doesn't include tool_calls, but the OpenAI API requires this format for function calling
-          (apiMessages as any).push({
+          // Execute the web search
+          toolResponse = await searchWeb({ query: searchQuery });
+          
+        } else if (functionName === "get_weather") {
+          const location = functionArgs.location;
+          console.log("Getting weather data for location:", location);
+          
+          // Add a visible message to the user about getting weather
+          updatedMessages.push({
             role: "assistant",
-            content: null, 
-            tool_calls: [{
-              id: toolCall.id,
-              type: "function",
-              function: {
-                name: "search_web",
-                arguments: toolCall.function.arguments
-              }
-            }]
+            content: `I'll check the current weather and forecast for ${location}`
           });
           
-          // Then add the tool response message
-          // We need to use 'as any' again because the Message type doesn't include 'tool' as a role
-          // or tool_call_id as a property
-          (apiMessages as any).push({
-            role: "tool",
-            content: searchResults,
-            tool_call_id: toolCall.id
-          });
+          // Get weather data
+          const weatherData = await getWeatherInfo(location);
           
-          // Get a second response from the model with the search results
-          const secondResponse = await openai.chat.completions.create({
-            model: "gpt-4o", // Use gpt-4o for handling search results (more reliable)
-            messages: apiMessages,
-            temperature: 0.7,
-            max_tokens: 500
-          });
-          
-          // Get the AI response that incorporates the search results
-          const aiResponse = secondResponse.choices[0].message.content || "I'm sorry, I couldn't process your request.";
-          
-          // Add the final AI response to conversation
-          updatedMessages.push({ role: "assistant", content: aiResponse });
+          if (weatherData) {
+            // Get agricultural recommendations based on weather
+            const recommendations = getAgricultureRecommendations(weatherData);
+            
+            // Combine weather data and recommendations
+            toolResponse = JSON.stringify({
+              weather: weatherData,
+              recommendations: recommendations
+            });
+          } else {
+            toolResponse = "I couldn't retrieve weather information for that location. Please check the spelling or try a different location.";
+          }
         }
+        
+        // Add the tool response to messages array
+        (apiMessages as any).push({
+          role: "tool",
+          content: toolResponse,
+          tool_call_id: toolCall.id
+        });
+        
+        // Get a second response from the model with the tool results
+        const secondResponse = await openai.chat.completions.create({
+          model: "gpt-4o", // Use gpt-4o for handling tool results (more reliable)
+          messages: apiMessages,
+          temperature: 0.7,
+          max_tokens: 800
+        });
+        
+        // Get the AI response that incorporates the tool results
+        const aiResponse = secondResponse.choices[0].message.content || "I'm sorry, I couldn't process your request.";
+        
+        // Add the final AI response to conversation
+        updatedMessages.push({ role: "assistant", content: aiResponse });
+        
       } else {
         // Handle normal non-function response
         const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
