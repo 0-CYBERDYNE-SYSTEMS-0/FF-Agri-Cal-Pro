@@ -9,11 +9,19 @@ interface LocationContextType {
   requestLocationPermission: () => void;
 }
 
-// Create the context with a default value of null
-const LocationContext = createContext<LocationContextType | null>(null);
+// Create the context with a default value
+const LocationContext = createContext<LocationContextType>({
+  location: null,
+  coordinates: null,
+  isLoading: true,
+  error: null,
+  requestLocationPermission: () => console.log("Location provider not available, using default location"),
+});
 
-// Provider component
-export const LocationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+/**
+ * Location Provider component that provides geolocation functionality
+ */
+export function LocationProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<{ lat: number; lon: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,8 +125,8 @@ export const LocationProvider: React.FC<{ children: ReactNode }> = ({ children }
     getLocationFromBrowser();
   };
 
-  // Create the context value object
-  const contextValue: LocationContextType = {
+  // Create the context value
+  const value = {
     location,
     coordinates,
     isLoading,
@@ -127,17 +135,16 @@ export const LocationProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   return (
-    <LocationContext.Provider value={contextValue}>
+    <LocationContext.Provider value={value}>
       {children}
     </LocationContext.Provider>
   );
-};
+}
 
-// Custom hook to use the location context
-export const useLocation = (): LocationContextType => {
+/**
+ * Custom hook to use the location context
+ */
+export function useLocation() {
   const context = useContext(LocationContext);
-  if (!context) {
-    throw new Error("useLocation must be used within a LocationProvider");
-  }
   return context;
-};
+}
