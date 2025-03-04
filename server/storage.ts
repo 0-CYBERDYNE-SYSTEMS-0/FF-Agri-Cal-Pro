@@ -207,7 +207,7 @@ export class MemStorage implements IStorage {
       messages: [
         {
           role: "assistant",
-          content: "Hello! I'm your agricultural planning assistant. How can I help you today?"
+          content: "Hello! I'm Farm Friend your agricultural planning assistant. How can I help you today?"
         },
         {
           role: "user",

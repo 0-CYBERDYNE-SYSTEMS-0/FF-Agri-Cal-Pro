@@ -188,7 +188,7 @@ export default function Assistant() {
       {/* Chat interface */}
       <div className="flex-1 bg-white rounded-lg shadow flex flex-col overflow-hidden">
         <div className="p-4 border-b border-neutral-200 bg-primary text-white">
-          <h2 className="font-medium">AI Assistant</h2>
+          <h2 className="font-medium">Farm Friend</h2>
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-4">

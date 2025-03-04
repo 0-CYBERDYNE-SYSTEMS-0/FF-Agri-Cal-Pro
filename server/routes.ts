@@ -6,6 +6,7 @@ import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConvers
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
+import { getWeatherInfo, getAgricultureRecommendations } from "./openWeatherApi";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
@@ -256,6 +257,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Real-time weather data API for the AI assistant
+  app.get("/api/weather-data", async (req: Request, res: Response) => {
+    try {
+      const location = (req.query.location as string);
+      
+      if (!location) {
+        return res.status(400).json({ message: "Location parameter is required" });
+      }
+      
+      const weatherData = await getWeatherInfo(location);
+      
+      if (!weatherData) {
+        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      }
+      
+      return res.status(200).json(weatherData);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+  
+  // Agricultural weather recommendations API
+  app.get("/api/agri-weather-recommendations", async (req: Request, res: Response) => {
+    try {
+      const location = (req.query.location as string);
+      
+      if (!location) {
+        return res.status(400).json({ message: "Location parameter is required" });
+      }
+      
+      const weatherData = await getWeatherInfo(location);
+      
+      if (!weatherData) {
+        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      }
+      
+      const recommendations = getAgricultureRecommendations(weatherData);
+      return res.status(200).json({ recommendations });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+  
   // Web search route
   app.post("/api/search", async (req: Request, res: Response) => {
     try {
@@ -338,7 +382,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedMessages.some(msg => msg.role === "system")) {
         updatedMessages.unshift({
           role: "system",
-          content: "You are an agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
+          content: "You are an Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
           "Current date: " + new Date().toLocaleDateString() + "\n\n" +
           "Your responsibilities:\n" +
           "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +
