@@ -3,8 +3,14 @@ import { apiRequest } from "./queryClient";
 
 // We're using a mock API for demo purposes
 // In a real application, you would replace this with actual OpenWeather API calls
-export async function getWeatherForecast(location: string = "default"): Promise<WeatherForecast[]> {
+export async function getWeatherForecast(location?: string): Promise<WeatherForecast[]> {
   try {
+    // Try to get location from localStorage if not provided
+    if (!location) {
+      const savedLocation = localStorage.getItem("userLocation");
+      location = savedLocation || "default";
+    }
+    
     const response = await apiRequest("GET", `/api/weather?location=${encodeURIComponent(location)}`);
     const data = await response.json();
     return data;
@@ -24,8 +30,14 @@ export function getWeatherDescription(description: string): string {
 }
 
 export function getLocationName(location: string): string {
-  // In a real app, this would get the formatted location name
-  return "Your Location";
+  // If we have a user's saved location, use that
+  const savedLocation = localStorage.getItem("userLocation");
+  if (savedLocation && (location === "default" || !location)) {
+    return savedLocation;
+  }
+  
+  // Otherwise, return the passed location or a default
+  return location || "Your Location";
 }
 
 // Weather utility functions

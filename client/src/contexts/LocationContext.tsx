@@ -1,5 +1,4 @@
 import { createContext, useState, useEffect, useContext, ReactNode } from "react";
-import { useToast } from "@/hooks/use-toast";
 
 interface LocationContextType {
   location: string | null;
@@ -14,110 +13,104 @@ const LocationContext = createContext<LocationContextType | null>(null);
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<{ lat: number; lon: number } | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { toast } = useToast();
 
-  // Function to get address from coordinates using reverse geocoding
-  const getAddressFromCoordinates = async (lat: number, lon: number) => {
+  const saveLocationToStorage = (loc: string) => {
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-      
-      // Extract city and country from the response
-      const city = data.address.city || data.address.town || data.address.village || data.address.hamlet || data.address.county || '';
-      const state = data.address.state || '';
-      const country = data.address.country || '';
-      
-      const locationString = [city, state, country].filter(Boolean).join(", ");
-      return locationString;
-    } catch (error) {
-      console.error("Error getting location name:", error);
-      return "Unknown Location";
+      localStorage.setItem("userLocation", loc);
+    } catch (err) {
+      console.error("Could not save location to localStorage:", err);
     }
   };
 
-  const requestLocationPermission = () => {
+  const getLocationFromBrowser = () => {
     setIsLoading(true);
     setError(null);
-    
+
     if (!navigator.geolocation) {
       setError("Geolocation is not supported by your browser");
       setIsLoading(false);
-      
-      toast({
-        title: "Location Not Available",
-        description: "Geolocation is not supported by your browser. Using default location.",
-        variant: "destructive",
-      });
-      
       return;
     }
-    
+
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
         setCoordinates({ lat: latitude, lon: longitude });
         
-        // Get address from coordinates
-        const locationName = await getAddressFromCoordinates(latitude, longitude);
-        setLocation(locationName);
+        // Try to get city name using reverse geocoding
+        try {
+          const response = await fetch(
+            `https://api.openweathermap.org/geo/1.0/reverse?lat=${latitude}&lon=${longitude}&limit=1&appid=${process.env.OPENWEATHER_API_KEY || "placeholder"}`
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data && data.length > 0) {
+              const cityName = data[0].name;
+              setLocation(cityName);
+              saveLocationToStorage(cityName);
+            } else {
+              // If we can't resolve a city name, use coordinates as a string
+              const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+              setLocation(locationString);
+              saveLocationToStorage(locationString);
+            }
+          } else {
+            // Fallback to coordinates if geocoding fails
+            const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+            setLocation(locationString);
+            saveLocationToStorage(locationString);
+          }
+        } catch (err) {
+          console.error("Error in reverse geocoding:", err);
+          // Fallback to coordinates
+          const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+          setLocation(locationString);
+          saveLocationToStorage(locationString);
+        }
+        
         setIsLoading(false);
-        
-        toast({
-          title: "Location Access Granted",
-          description: `Your location is set to: ${locationName}`,
-        });
-        
-        // Save to localStorage
-        localStorage.setItem("userLocation", locationName);
-        localStorage.setItem("userCoordinates", JSON.stringify({ lat: latitude, lon: longitude }));
       },
-      (error) => {
-        console.error("Error getting location:", error);
-        setError(error.message);
-        setIsLoading(false);
+      (err) => {
+        console.error("Error getting location:", err);
+        setError(`Error getting location: ${err.message}`);
         
-        toast({
-          title: "Location Access Denied",
-          description: "Using default location data. Enable location for personalized weather and farming recommendations.",
-          variant: "destructive",
-        });
-      }
+        // Try to use saved location if available
+        const savedLocation = localStorage.getItem("userLocation");
+        if (savedLocation) {
+          setLocation(savedLocation);
+          setError(null);
+        } else {
+          // Default to a reasonable location if nothing is available
+          setLocation("New York");
+          saveLocationToStorage("New York");
+        }
+        
+        setIsLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     );
   };
 
-  // Load saved location on initial mount
+  // Initialize location from localStorage or set default on mount
   useEffect(() => {
     const savedLocation = localStorage.getItem("userLocation");
-    const savedCoordinates = localStorage.getItem("userCoordinates");
     
     if (savedLocation) {
       setLocation(savedLocation);
-    }
-    
-    if (savedCoordinates) {
-      try {
-        setCoordinates(JSON.parse(savedCoordinates));
-      } catch (error) {
-        console.error("Error parsing saved coordinates:", error);
-      }
-    }
-    
-    // If no saved location, request it
-    if (!savedLocation) {
-      // Wait a moment before requesting location to ensure app is loaded
-      const timer = setTimeout(() => {
-        requestLocationPermission();
-      }, 1000);
-      
-      return () => clearTimeout(timer);
+      setIsLoading(false);
+    } else {
+      // Default location if nothing saved and no permission yet
+      setLocation("New York");
+      setIsLoading(false);
     }
   }, []);
+
+  const requestLocationPermission = () => {
+    getLocationFromBrowser();
+  };
 
   return (
     <LocationContext.Provider

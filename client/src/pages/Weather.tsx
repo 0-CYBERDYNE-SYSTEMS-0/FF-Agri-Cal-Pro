@@ -5,12 +5,30 @@ import WeatherRow from "@/components/weather/WeatherRow";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Event } from "@shared/schema";
 import { formatDate, isSameDay } from "@/lib/calendarUtils";
+import { useLocation } from "@/contexts/LocationContext";
 
 export default function Weather() {
   const [location, setLocation] = useState("default");
+  const { location: userLocation, requestLocationPermission } = useLocation();
+  
+  // Use user's location when available
+  useEffect(() => {
+    if (userLocation && location === "default") {
+      setLocation(userLocation);
+    }
+  }, [userLocation, location]);
+  
+  // Request location permission when component mounts, if needed
+  useEffect(() => {
+    const hasRequestedLocation = localStorage.getItem("locationRequested");
+    if (!hasRequestedLocation) {
+      requestLocationPermission();
+      localStorage.setItem("locationRequested", "true");
+    }
+  }, [requestLocationPermission]);
   
   const { data: weatherData = [], isLoading: isLoadingWeather } = useQuery<WeatherForecast[]>({
     queryKey: ["/api/weather", location],
@@ -66,11 +84,14 @@ export default function Weather() {
           <p className="text-neutral-500">{getLocationName(location)}</p>
         </div>
         <Select value={location} onValueChange={setLocation}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-52">
             <SelectValue placeholder="Select location" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="default">Your Location</SelectItem>
+            {userLocation && userLocation !== "default" && (
+              <SelectItem value={userLocation}>{userLocation}</SelectItem>
+            )}
             <SelectItem value="north">North Fields</SelectItem>
             <SelectItem value="south">South Fields</SelectItem>
             <SelectItem value="greenhouse">Greenhouse</SelectItem>
