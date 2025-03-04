@@ -39,18 +39,18 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         const { latitude, longitude } = position.coords;
         setCoordinates({ lat: latitude, lon: longitude });
         
-        // Try to get city name using reverse geocoding
+        // Use our API instead of direct call to OpenWeather API
         try {
+          // Use the backend API to do reverse geocoding
           const response = await fetch(
-            `https://api.openweathermap.org/geo/1.0/reverse?lat=${latitude}&lon=${longitude}&limit=1&appid=${process.env.OPENWEATHER_API_KEY || "placeholder"}`
+            `/api/weather-data?lat=${latitude}&lon=${longitude}`
           );
           
           if (response.ok) {
             const data = await response.json();
-            if (data && data.length > 0) {
-              const cityName = data[0].name;
-              setLocation(cityName);
-              saveLocationToStorage(cityName);
+            if (data && data.location) {
+              setLocation(data.location);
+              saveLocationToStorage(data.location);
             } else {
               // If we can't resolve a city name, use coordinates as a string
               const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;

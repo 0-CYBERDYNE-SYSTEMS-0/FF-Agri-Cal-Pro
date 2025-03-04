@@ -48,8 +48,23 @@ export function getWeatherIcon(icon: string): string {
   }
   
   // Otherwise check if it's an emoji already
-  if (icon.includes('️')) {
+  if (icon && typeof icon === 'string' && (icon.includes('️') || icon.codePointAt(0)! > 127)) {
     return icon;
+  }
+  
+  // Check for common icon code patterns and return appropriate emoji
+  if (icon && typeof icon === 'string') {
+    // Extract the number part from icon codes like "01d", "02n", etc.
+    const iconCode = icon.replace(/[dn]$/, '');
+    
+    if (iconCode === '01') return '☀️';
+    if (iconCode === '02') return '⛅';
+    if (iconCode === '03' || iconCode === '04') return '☁️';
+    if (iconCode === '09') return '🌧️';
+    if (iconCode === '10') return '🌦️';
+    if (iconCode === '11') return '⛈️';
+    if (iconCode === '13') return '❄️';
+    if (iconCode === '50') return '🌫️';
   }
   
   // Default icon if no match
