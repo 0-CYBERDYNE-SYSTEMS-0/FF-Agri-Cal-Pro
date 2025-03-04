@@ -6,7 +6,7 @@ import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConvers
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
-import { getWeatherInfo, getAgricultureRecommendations } from "./openWeatherApi";
+import { getWeatherInfo, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
