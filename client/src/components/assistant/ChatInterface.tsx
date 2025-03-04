@@ -160,7 +160,7 @@ export default function ChatInterface() {
             </div>
           ) : (
             <>
-              {messages.map((message, index) => (
+              {messages.map((message: Message, index: number) => (
                 <div key={index} className={`flex items-start ${
                   message.role === "user" ? "justify-end" : ""
                 }`}>
