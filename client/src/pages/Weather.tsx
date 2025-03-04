@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import { Event } from "@shared/schema";
 import { formatDate, isSameDay } from "@/lib/calendarUtils";
 import { useLocation } from "@/contexts/LocationContext";
+import { useWeather } from "@/hooks/use-weather";
 
 export default function Weather() {
   const [location, setLocation] = useState("default");
@@ -30,20 +31,8 @@ export default function Weather() {
     }
   }, [requestLocationPermission]);
   
-  const { data: weatherData = [], isLoading: isLoadingWeather } = useQuery<WeatherForecast[]>({
-    queryKey: ["/api/weather", location],
-    queryFn: async () => {
-      const response = await fetch(`/api/weather?location=${encodeURIComponent(location)}`, {
-        credentials: "include",
-      });
-      
-      if (!response.ok) {
-        throw new Error("Failed to fetch weather data");
-      }
-      
-      return response.json();
-    }
-  });
+  // Use our weather hook to manage weather data
+  const { weatherData, isLoading: isLoadingWeather, error } = useWeather(location === "default" ? undefined : location);
   
   const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
     queryKey: ["/api/events"],
@@ -173,7 +162,7 @@ export default function Weather() {
           </div>
         ) : weatherDependentEvents.length > 0 ? (
           <div className="space-y-2">
-            {weatherData.map(forecast => {
+            {weatherData.map((forecast: WeatherForecast) => {
               const eventsOnDay = eventsByDate[forecast.date] || [];
               
               if (eventsOnDay.length === 0) return null;
