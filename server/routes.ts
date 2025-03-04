@@ -323,7 +323,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedMessages.some(msg => msg.role === "system")) {
         updatedMessages.unshift({
           role: "system",
-          content: `You are an agricultural planning assistant. Help the user with their agricultural calendar, planning, and provide advice based on their location and weather conditions. Current date is ${new Date().toLocaleDateString()}.`
+          content: `You are an agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.
+          
+Current date: ${new Date().toLocaleDateString()}
+          
+Your responsibilities:
+1. Provide specific crop planting and harvesting schedules based on seasons and locations
+2. Suggest sustainable farming practices appropriate for different crops and climates
+3. Help users plan their agricultural calendar with detailed timelines
+4. Offer recommendations for dealing with various weather conditions and climate challenges
+5. Assist with pest management and soil health optimization
+6. Provide advice on water conservation and irrigation planning
+
+Respond with detailed, actionable information that farmers can implement immediately. Include specific timelines, measurements, and practical steps whenever possible.`
         });
       }
       
@@ -333,13 +345,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         content: msg.content
       }));
       
-      // Call OpenAI API
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: apiMessages,
-        temperature: 0.7,
-        max_tokens: 500
-      });
+      // Call OpenAI API with model fallback
+      let response;
+      try {
+        // First attempt with o3-mini model
+        response = await openai.chat.completions.create({
+          model: "o3-mini",
+          messages: apiMessages,
+          reasoning_effort: "high", // New parameter for o3-mini: low, medium, or high
+          temperature: 0.7,
+          max_tokens: 500
+        });
+      } catch (modelError) {
+        console.warn("o3-mini model error, falling back to gpt-4o:", modelError.message);
+        try {
+          // Fallback to gpt-4o
+          response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: apiMessages,
+            temperature: 0.7,
+            max_tokens: 500
+          });
+        } catch (fallbackError) {
+          console.warn("gpt-4o model error, falling back to gpt-3.5-turbo:", fallbackError.message);
+          // Final fallback to gpt-3.5-turbo
+          response = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: apiMessages,
+            temperature: 0.7,
+            max_tokens: 500
+          });
+        }
+      }
       
       // Get AI response
       const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
