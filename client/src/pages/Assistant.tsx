@@ -5,6 +5,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { useToast } from "@/hooks/use-toast";
 import { createConversation, getChatCompletion } from "@/lib/openAiApi";
 
@@ -223,10 +224,17 @@ export default function Assistant() {
                   
                   <div className={`mx-2 rounded-lg p-3 max-w-[75%] ${
                     message.role === "user" 
-                      ? "bg-primary-light text-white" 
+                      ? "bg-primary text-white" 
                       : "bg-neutral-100"
                   }`}>
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    {message.role === "user" ? (
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    ) : (
+                      <MarkdownRenderer 
+                        content={message.content} 
+                        className="text-sm text-foreground"
+                      />
+                    )}
                   </div>
                   
                   {message.role === "user" && (
