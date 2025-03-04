@@ -5,6 +5,7 @@ import { z } from "zod";
 import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
+import { searchWeb } from "./perplexityApi";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
@@ -254,6 +255,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return handleApiError(err, res);
     }
   });
+  
+  // Web search route
+  app.post("/api/search", async (req: Request, res: Response) => {
+    try {
+      const { query } = z.object({
+        query: z.string()
+      }).parse(req.body);
+      
+      const searchResults = await searchWeb({ query });
+      return res.status(200).json({ results: searchResults });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
 
   // Assistant/Conversation routes
   app.get("/api/conversations", async (req: Request, res: Response) => {
@@ -335,6 +350,8 @@ Your responsibilities:
 5. Assist with pest management and soil health optimization
 6. Provide advice on water conservation and irrigation planning
 
+Use your web search function to get up-to-date information when needed, especially for specific agricultural data, seasonal information, or regional farming practices.
+
 Respond with detailed, actionable information that farmers can implement immediately. Include specific timelines, measurements, and practical steps whenever possible.`
         });
       }
@@ -345,6 +362,27 @@ Respond with detailed, actionable information that farmers can implement immedia
         content: msg.content
       }));
       
+      // Define function for web search
+      const functions = [
+        {
+          type: "function",
+          function: {
+            name: "search_web",
+            description: "Search the web for current or specific information that would be helpful for agricultural planning and scheduling",
+            parameters: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "The search query. Be specific and include relevant agricultural terms."
+                }
+              },
+              required: ["query"]
+            }
+          }
+        }
+      ];
+      
       // Call OpenAI API with model fallback
       let response;
       try {
@@ -352,37 +390,98 @@ Respond with detailed, actionable information that farmers can implement immedia
         response = await openai.chat.completions.create({
           model: "o3-mini",
           messages: apiMessages,
-          reasoning_effort: "high", // New parameter for o3-mini: low, medium, or high
+          reasoning_effort: "low", // New parameter for o3-mini: low, medium, or high
           temperature: 0.7,
-          max_tokens: 500
+          max_completion_tokens: 500, // Use max_completion_tokens for o3-mini models
+          tools: functions
         });
-      } catch (modelError) {
-        console.warn("o3-mini model error, falling back to gpt-4o:", modelError.message);
+      } catch (modelError: unknown) {
+        const errorMessage = modelError instanceof Error ? modelError.message : String(modelError);
+        console.warn("o3-mini model error, falling back to gpt-4o:", errorMessage);
         try {
           // Fallback to gpt-4o
           response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: apiMessages,
             temperature: 0.7,
-            max_tokens: 500
+            max_tokens: 500,
+            tools: functions
           });
-        } catch (fallbackError) {
-          console.warn("gpt-4o model error, falling back to gpt-3.5-turbo:", fallbackError.message);
+        } catch (fallbackError: unknown) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          console.warn("gpt-4o model error, falling back to gpt-3.5-turbo:", fallbackErrorMessage);
           // Final fallback to gpt-3.5-turbo
           response = await openai.chat.completions.create({
             model: "gpt-3.5-turbo",
             messages: apiMessages,
             temperature: 0.7,
-            max_tokens: 500
+            max_tokens: 500,
+            tools: functions
           });
         }
       }
       
-      // Get AI response
-      const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
-      
-      // Add AI response to conversation
-      updatedMessages.push({ role: "assistant", content: aiResponse });
+      // Handle function calling if the model wants to search the web
+      if (response.choices[0].message.tool_calls && response.choices[0].message.tool_calls.length > 0) {
+        const toolCall = response.choices[0].message.tool_calls[0];
+        
+        if (toolCall.function.name === "search_web") {
+          // Parse the function arguments
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+          const searchQuery = functionArgs.query;
+          
+          console.log("Performing web search for query:", searchQuery);
+          
+          // Execute the web search
+          const searchResults = await searchWeb({ query: searchQuery });
+          
+          // Add the assistant's tool call message to the conversation
+          updatedMessages.push({
+            role: "assistant",
+            content: `I'll search for information about: ${searchQuery}`
+          });
+          
+          // Add the tool response to the messages
+          apiMessages.push({
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: toolCall.id,
+                type: "function",
+                function: {
+                  name: "search_web",
+                  arguments: toolCall.function.arguments
+                }
+              }
+            ]
+          });
+          
+          apiMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: searchResults
+          });
+          
+          // Get a second response from the model with the search results
+          const secondResponse = await openai.chat.completions.create({
+            model: "gpt-4o", // Use gpt-4o for handling search results (more reliable)
+            messages: apiMessages,
+            temperature: 0.7,
+            max_tokens: 500
+          });
+          
+          // Get the AI response that incorporates the search results
+          const aiResponse = secondResponse.choices[0].message.content || "I'm sorry, I couldn't process your request.";
+          
+          // Add the final AI response to conversation
+          updatedMessages.push({ role: "assistant", content: aiResponse });
+        }
+      } else {
+        // Handle normal non-function response
+        const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
+        updatedMessages.push({ role: "assistant", content: aiResponse });
+      }
       
       const updatedConversation = await storage.updateConversation(id, updatedMessages);
       return res.status(200).json(updatedConversation);
