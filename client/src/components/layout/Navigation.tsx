@@ -34,7 +34,7 @@ export default function Navigation() {
           Projects
         </NavLink>
         <NavLink href="/assistant" active={location === "/assistant"}>
-          AI Assistant
+          Farm Friend
         </NavLink>
         <NavLink href="/weather" active={location === "/weather"}>
           Weather

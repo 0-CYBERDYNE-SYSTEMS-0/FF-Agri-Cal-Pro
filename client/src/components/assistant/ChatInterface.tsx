@@ -141,7 +141,7 @@ export default function ChatInterface() {
         className={`${isOpen ? 'block' : 'hidden'} fixed bottom-24 right-6 w-80 md:w-96 bg-white rounded-lg shadow-2xl overflow-hidden z-10 max-h-[70vh] flex flex-col`}
       >
         <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-primary text-white">
-          <h3 className="font-medium">AI Assistant</h3>
+          <h3 className="font-medium">Farm Friend</h3>
           <button 
             id="close-chat" 
             className="text-white hover:text-neutral-200 transition"
