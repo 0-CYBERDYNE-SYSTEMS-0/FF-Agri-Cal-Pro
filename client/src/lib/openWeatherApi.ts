@@ -1,8 +1,7 @@
 import { WeatherForecast } from "@shared/schema";
 import { apiRequest } from "./queryClient";
 
-// We're using a mock API for demo purposes
-// In a real application, you would replace this with actual OpenWeather API calls
+// This uses the real OpenWeather API through our backend
 export async function getWeatherForecast(location?: string): Promise<WeatherForecast[]> {
   try {
     // Try to get location from localStorage if not provided
@@ -21,12 +20,50 @@ export async function getWeatherForecast(location?: string): Promise<WeatherFore
 }
 
 export function getWeatherIcon(icon: string): string {
-  // In a real app, this would map OpenWeather icon codes to actual icons
-  return icon;
+  // Map OpenWeather icon codes to emoji icons
+  const iconMap: {[key: string]: string} = {
+    '01d': '☀️', // clear sky day
+    '01n': '🌙', // clear sky night
+    '02d': '⛅', // few clouds day
+    '02n': '☁️', // few clouds night
+    '03d': '☁️', // scattered clouds
+    '03n': '☁️',
+    '04d': '☁️', // broken clouds
+    '04n': '☁️',
+    '09d': '🌧️', // shower rain
+    '09n': '🌧️',
+    '10d': '🌦️', // rain
+    '10n': '🌧️',
+    '11d': '⛈️', // thunderstorm
+    '11n': '⛈️',
+    '13d': '❄️', // snow
+    '13n': '❄️',
+    '50d': '🌫️', // mist
+    '50n': '🌫️'
+  };
+  
+  // If we have a direct match for the icon code
+  if (iconMap[icon]) {
+    return iconMap[icon];
+  }
+  
+  // Otherwise check if it's an emoji already
+  if (icon.includes('️')) {
+    return icon;
+  }
+  
+  // Default icon if no match
+  return '🌤️';
 }
 
 export function getWeatherDescription(description: string): string {
-  return description;
+  // Capitalize the first letter of each word for better presentation
+  if (!description) return '';
+  
+  return description
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 export function getLocationName(location: string): string {
@@ -36,8 +73,21 @@ export function getLocationName(location: string): string {
     return savedLocation;
   }
   
+  // Format the location name nicely if it's from the OpenWeather API (contains commas)
+  if (location && location.includes(',')) {
+    const parts = location.split(',').map(part => part.trim());
+    // If we have city, country, state format
+    if (parts.length === 3) {
+      return `${parts[0]}, ${parts[2]}`;
+    }
+    // If we have city, country format
+    if (parts.length === 2) {
+      return `${parts[0]}, ${parts[1]}`;
+    }
+  }
+  
   // Otherwise, return the passed location or a default
-  return location || "Your Location";
+  return location === "default" ? "New York, USA" : (location || "Your Location");
 }
 
 // Weather utility functions

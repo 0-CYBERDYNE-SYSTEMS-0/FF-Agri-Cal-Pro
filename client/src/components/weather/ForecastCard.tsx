@@ -16,9 +16,9 @@ export default function ForecastCard({ forecast, isToday = false }: ForecastCard
     <Card className="shadow">
       <CardContent className="p-4 text-center">
         <p className="font-medium text-neutral-700">{isToday ? "Today" : dayOfWeek}</p>
-        <div className="my-2 text-4xl">{icon}</div>
+        <div className="my-2 text-4xl">{getWeatherIcon(icon)}</div>
         <p className="text-lg font-medium">{temperature}°F</p>
-        <p className="text-sm text-neutral-500">{weatherDescription}</p>
+        <p className="text-sm text-neutral-500">{getWeatherDescription(weatherDescription)}</p>
         
         <div className="mt-2 text-xs text-neutral-600 space-y-1">
           <div className="flex justify-between items-center">
