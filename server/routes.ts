@@ -248,14 +248,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Weather routes
   app.get("/api/weather", async (req: Request, res: Response) => {
     try {
-      // Mock location data - in a real app, this would come from the user's location
-      const location = (req.query.location as string) || "default";
-      const forecast = await storage.getMockWeatherForecast(location);
+      // Get location from query params or use default
+      const location = (req.query.location as string) || "New York";
+      
+      // Get real weather data from OpenWeather API
+      const weatherData = await getWeatherInfo(location);
+      
+      if (!weatherData) {
+        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      }
+      
+      // Convert the API response to our WeatherForecast format for consistency
+      const forecast = [
+        // Today's forecast
+        {
+          date: new Date().toISOString().split('T')[0],
+          dayOfWeek: "Today",
+          temperature: Math.round((weatherData.current.temp * 9/5) + 32), // Convert from C to F
+          weatherDescription: weatherData.current.weather_description,
+          icon: weatherIconToEmoji(weatherData.current.icon),
+          wind: Math.round(weatherData.current.wind_speed * 2.237), // Convert m/s to mph
+          humidity: weatherData.current.humidity,
+          precipitation: 0 // Not directly available in the API, would need additional calls
+        },
+        // Next 6 days forecast mapped from weatherData.forecast
+        ...weatherData.forecast.slice(0, 6).map((day, i) => {
+          const date = new Date();
+          date.setDate(date.getDate() + i + 1);
+          
+          return {
+            date: day.date,
+            dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(day.date).getDay()],
+            temperature: Math.round((day.temp * 9/5) + 32), // Convert from C to F
+            weatherDescription: day.weather_description,
+            icon: weatherIconToEmoji(day.icon),
+            wind: 0, // Not directly available in this forecast format
+            humidity: 0, // Not directly available in this forecast format
+            precipitation: 0 // Not directly available in this forecast format
+          };
+        })
+      ];
+      
       return res.status(200).json(forecast);
     } catch (err) {
+      console.error("Error fetching weather data:", err);
       return handleApiError(err, res);
     }
   });
+  
+// Helper function to convert OpenWeather icon codes to emoji
+function weatherIconToEmoji(iconCode: string): string {
+  const iconMap: {[key: string]: string} = {
+    '01d': '☀️', // clear sky day
+    '01n': '🌙', // clear sky night
+    '02d': '⛅', // few clouds day
+    '02n': '☁️', // few clouds night
+    '03d': '☁️', // scattered clouds
+    '03n': '☁️',
+    '04d': '☁️', // broken clouds
+    '04n': '☁️',
+    '09d': '🌧️', // shower rain
+    '09n': '🌧️',
+    '10d': '🌦️', // rain
+    '10n': '🌧️',
+    '11d': '⛈️', // thunderstorm
+    '11n': '⛈️',
+    '13d': '❄️', // snow
+    '13n': '❄️',
+    '50d': '🌫️', // mist
+    '50n': '🌫️'
+  };
+  
+  return iconMap[iconCode] || '🌤️';
+}
   
   // Real-time weather data API for the AI assistant
   app.get("/api/weather-data", async (req: Request, res: Response) => {

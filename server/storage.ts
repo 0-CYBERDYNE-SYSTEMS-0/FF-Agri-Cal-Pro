@@ -28,8 +28,8 @@ export interface IStorage {
   createConversation(conversation: InsertConversation): Promise<Conversation>;
   updateConversation(id: number, messages: any[]): Promise<Conversation | undefined>;
 
-  // Weather mock data
-  getMockWeatherForecast(location: string): Promise<WeatherForecast[]>;
+  // Storage interface intentionally doesn't include weather functions
+  // as weather data comes directly from the OpenWeatherAPI
 }
 
 export class MemStorage implements IStorage {
@@ -343,39 +343,7 @@ export class MemStorage implements IStorage {
     return updatedConversation;
   }
 
-  // Weather mock data
-  async getMockWeatherForecast(location: string): Promise<WeatherForecast[]> {
-    const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const icons = ["🌤️", "☀️", "🌧️", "🌦️", "🌤️", "☀️", "⛅"];
-    const descriptions = [
-      "Clear with clouds", 
-      "Sunny", 
-      "Light Rain", 
-      "Showers", 
-      "Partly Cloudy", 
-      "Sunny", 
-      "Mostly Sunny"
-    ];
-    const today = new Date();
-    
-    return Array.from({ length: 7 }, (_, i) => {
-      const date = new Date();
-      date.setDate(today.getDate() + i);
-      
-      const dayOfWeek = i === 0 ? "Today" : daysOfWeek[date.getDay()];
-      
-      return {
-        date: date.toISOString().split('T')[0],
-        dayOfWeek,
-        temperature: Math.floor(60 + Math.random() * 15),
-        weatherDescription: descriptions[i],
-        icon: icons[i],
-        wind: Math.floor(3 + Math.random() * 8),
-        humidity: Math.floor(40 + Math.random() * 40),
-        precipitation: i === 2 || i === 3 ? Math.floor(60 + Math.random() * 30) : Math.floor(Math.random() * 20)
-      };
-    });
-  }
+  // Weather functionality removed in favor of OpenWeather API
 }
 
 export const storage = new MemStorage();
