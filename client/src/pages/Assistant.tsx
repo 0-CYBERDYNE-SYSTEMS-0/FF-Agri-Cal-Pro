@@ -122,7 +122,8 @@ export default function Assistant() {
     setActiveConversationId(id);
   };
   
-  const messages = activeConversation?.messages || [];
+  // Ensure messages has the correct type (array of Message objects)
+  const messages: Message[] = activeConversation?.messages as Message[] || [];
 
   return (
     <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-14rem)]">
@@ -151,9 +152,10 @@ export default function Assistant() {
           </div>
         ) : conversations.length > 0 ? (
           <div className="space-y-2">
-            {conversations.map((conversation) => {
+            {conversations.map((conversation: Conversation) => {
               // Get first message as title or use timestamp
-              const firstMessage = conversation.messages[0]?.content || "";
+              const messages = conversation.messages as Message[];
+              const firstMessage = messages[0]?.content || "";
               const preview = firstMessage.length > 25 
                 ? firstMessage.substring(0, 25) + "..." 
                 : firstMessage;
@@ -206,7 +208,10 @@ export default function Assistant() {
             </div>
           ) : (
             <>
-              {messages.map((message, index) => (
+              {messages
+                // Filter out system messages so they don't show in the UI
+                .filter((message: Message) => message.role !== "system")
+                .map((message: Message, index: number) => (
                 <div key={index} className={`flex items-start ${
                   message.role === "user" ? "justify-end" : ""
                 }`}>
