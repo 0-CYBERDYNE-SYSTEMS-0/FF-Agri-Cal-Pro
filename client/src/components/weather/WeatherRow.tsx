@@ -22,7 +22,7 @@ export default function WeatherRow({ forecasts, isLoading = false }: WeatherRowP
     <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
       {forecasts.map((forecast, index) => (
         <ForecastCard 
-          key={forecast.date} 
+          key={`${forecast.date}-${index}`} 
           forecast={forecast}
           isToday={index === 0} 
         />
