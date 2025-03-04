@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Conversation } from "@shared/schema";
+import MarkdownRenderer from "@/components/ui/markdown-renderer";
 
 interface Message {
   role: "user" | "assistant" | "system";
@@ -117,7 +118,7 @@ export default function ChatInterface() {
     }
   };
   
-  const messages = activeConversation?.messages || [];
+  const messages: Message[] = activeConversation?.messages as Message[] || [];
 
   return (
     <>
@@ -171,10 +172,17 @@ export default function ChatInterface() {
                   
                   <div className={`${
                     message.role === "user" 
-                      ? "mr-2 bg-primary-light text-white" 
+                      ? "mr-2 bg-primary text-white" 
                       : "ml-2 bg-neutral-100"
                   } rounded-lg p-3 max-w-[75%]`}>
-                    <p className="text-sm">{message.content}</p>
+                    {message.role === "user" ? (
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    ) : (
+                      <MarkdownRenderer 
+                        content={message.content} 
+                        className="text-sm text-foreground"
+                      />
+                    )}
                   </div>
                   
                   {message.role === "user" && (
