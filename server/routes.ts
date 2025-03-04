@@ -442,8 +442,10 @@ Respond with detailed, actionable information that farmers can implement immedia
           });
           
           // Add the tool response to the messages as OpenAI expects
-          // First add the assistant message with tool_calls that are supported by the OpenAI API
-          apiMessages.push({
+          // First add the assistant message with tool_calls
+          // We need to use 'as any' to bypass TypeScript's type checking because the Message type
+          // doesn't include tool_calls, but the OpenAI API requires this format for function calling
+          (apiMessages as any).push({
             role: "assistant",
             content: null, 
             tool_calls: [{
@@ -453,15 +455,17 @@ Respond with detailed, actionable information that farmers can implement immedia
                 name: "search_web",
                 arguments: toolCall.function.arguments
               }
-            }] as any // Type assertion to bypass TypeScript checking
+            }]
           });
           
           // Then add the tool response message
-          apiMessages.push({
+          // We need to use 'as any' again because the Message type doesn't include 'tool' as a role
+          // or tool_call_id as a property
+          (apiMessages as any).push({
             role: "tool",
             content: searchResults,
             tool_call_id: toolCall.id
-          } as any); // Type assertion to bypass TypeScript checking
+          });
           
           // Get a second response from the model with the search results
           const secondResponse = await openai.chat.completions.create({
