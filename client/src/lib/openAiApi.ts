@@ -34,7 +34,8 @@ export async function createConversation(initialMessages: Message[] = []): Promi
         {
           role: "system",
           content: "You are Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
-          "Current date: " + new Date().toLocaleDateString() + "\n\n" +
+          "Current date and time: " + new Date().toLocaleString() + "\n" +
+          "You must always consider date, time, and location in ALL your recommendations and activities. Time-sensitive agricultural advice is crucial for successful farming.\n\n" +
           "Your responsibilities:\n" +
           "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +
           "2. Suggest sustainable farming practices appropriate for different crops and climates\n" +
