@@ -1,5 +1,6 @@
-import { createContext, useState, useEffect, useContext, ReactNode } from "react";
+import React, { createContext, useState, useEffect, useContext, ReactNode } from "react";
 
+// Define the shape of our context
 interface LocationContextType {
   location: string | null;
   coordinates: { lat: number; lon: number } | null;
@@ -8,14 +9,17 @@ interface LocationContextType {
   requestLocationPermission: () => void;
 }
 
+// Create the context with a default value of null
 const LocationContext = createContext<LocationContextType | null>(null);
 
-export function LocationProvider({ children }: { children: ReactNode }) {
+// Provider component
+export const LocationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [location, setLocation] = useState<string | null>(null);
   const [coordinates, setCoordinates] = useState<{ lat: number; lon: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Save location to localStorage
   const saveLocationToStorage = (loc: string) => {
     try {
       localStorage.setItem("userLocation", loc);
@@ -24,6 +28,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Get location from browser's geolocation API
   const getLocationFromBrowser = () => {
     setIsLoading(true);
     setError(null);
@@ -112,25 +117,27 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     getLocationFromBrowser();
   };
 
+  // Create the context value object
+  const contextValue: LocationContextType = {
+    location,
+    coordinates,
+    isLoading,
+    error,
+    requestLocationPermission,
+  };
+
   return (
-    <LocationContext.Provider
-      value={{
-        location,
-        coordinates,
-        isLoading,
-        error,
-        requestLocationPermission,
-      }}
-    >
+    <LocationContext.Provider value={contextValue}>
       {children}
     </LocationContext.Provider>
   );
-}
+};
 
-export function useLocation() {
+// Custom hook to use the location context
+export const useLocation = (): LocationContextType => {
   const context = useContext(LocationContext);
   if (!context) {
     throw new Error("useLocation must be used within a LocationProvider");
   }
   return context;
-}
+};
