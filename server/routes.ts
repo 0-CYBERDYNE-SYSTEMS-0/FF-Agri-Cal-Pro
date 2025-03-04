@@ -325,6 +325,34 @@ function weatherIconToEmoji(iconCode: string): string {
   // Real-time weather data API for the AI assistant
   app.get("/api/weather-data", async (req: Request, res: Response) => {
     try {
+      // Check if we're doing reverse geocoding from coordinates
+      if (req.query.lat && req.query.lon) {
+        const lat = parseFloat(req.query.lat as string);
+        const lon = parseFloat(req.query.lon as string);
+        
+        if (isNaN(lat) || isNaN(lon)) {
+          return res.status(400).json({ message: "Invalid coordinates" });
+        }
+        
+        try {
+          // Get weather data which includes location name
+          const weatherData = await getCurrentWeather(lat, lon);
+          
+          if (!weatherData) {
+            return res.status(404).json({ message: "Could not retrieve location data" });
+          }
+          
+          return res.status(200).json({ 
+            location: weatherData.name + (weatherData.sys?.country ? `, ${weatherData.sys.country}` : ""),
+            weather: weatherData 
+          });
+        } catch (err) {
+          console.error("Error in reverse geocoding:", err);
+          return res.status(500).json({ message: "Error retrieving location from coordinates" });
+        }
+      }
+      
+      // Standard weather data request
       const location = (req.query.location as string);
       
       if (!location) {
