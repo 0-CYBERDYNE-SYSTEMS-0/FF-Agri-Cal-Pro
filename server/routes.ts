@@ -363,9 +363,9 @@ Respond with detailed, actionable information that farmers can implement immedia
       }));
       
       // Define function for web search
-      const functions = [
+      const tools = [
         {
-          type: "function",
+          type: "function" as const,
           function: {
             name: "search_web",
             description: "Search the web for current or specific information that would be helpful for agricultural planning and scheduling",
@@ -393,7 +393,7 @@ Respond with detailed, actionable information that farmers can implement immedia
           reasoning_effort: "low", // New parameter for o3-mini: low, medium, or high
           temperature: 0.7,
           max_completion_tokens: 500, // Use max_completion_tokens for o3-mini models
-          tools: functions
+          tools: tools
         });
       } catch (modelError: unknown) {
         const errorMessage = modelError instanceof Error ? modelError.message : String(modelError);
@@ -405,7 +405,7 @@ Respond with detailed, actionable information that farmers can implement immedia
             messages: apiMessages,
             temperature: 0.7,
             max_tokens: 500,
-            tools: functions
+            tools: tools
           });
         } catch (fallbackError: unknown) {
           const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
@@ -416,7 +416,7 @@ Respond with detailed, actionable information that farmers can implement immedia
             messages: apiMessages,
             temperature: 0.7,
             max_tokens: 500,
-            tools: functions
+            tools: tools
           });
         }
       }
@@ -441,27 +441,27 @@ Respond with detailed, actionable information that farmers can implement immedia
             content: `I'll search for information about: ${searchQuery}`
           });
           
-          // Add the tool response to the messages
+          // Add the tool response to the messages as OpenAI expects
+          // First add the assistant message with tool_calls that are supported by the OpenAI API
           apiMessages.push({
             role: "assistant",
-            content: null,
-            tool_calls: [
-              {
-                id: toolCall.id,
-                type: "function",
-                function: {
-                  name: "search_web",
-                  arguments: toolCall.function.arguments
-                }
+            content: null, 
+            tool_calls: [{
+              id: toolCall.id,
+              type: "function",
+              function: {
+                name: "search_web",
+                arguments: toolCall.function.arguments
               }
-            ]
+            }] as any // Type assertion to bypass TypeScript checking
           });
           
+          // Then add the tool response message
           apiMessages.push({
             role: "tool",
-            tool_call_id: toolCall.id,
-            content: searchResults
-          });
+            content: searchResults,
+            tool_call_id: toolCall.id
+          } as any); // Type assertion to bypass TypeScript checking
           
           // Get a second response from the model with the search results
           const secondResponse = await openai.chat.completions.create({
