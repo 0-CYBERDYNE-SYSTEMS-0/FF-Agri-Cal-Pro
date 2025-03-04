@@ -391,9 +391,9 @@ Respond with detailed, actionable information that farmers can implement immedia
           model: "o3-mini",
           messages: apiMessages,
           reasoning_effort: "low", // New parameter for o3-mini: low, medium, or high
-          temperature: 0.7,
           max_completion_tokens: 500, // Use max_completion_tokens for o3-mini models
           tools: tools
+          // Note: o3-mini doesn't support temperature parameter
         });
       } catch (modelError: unknown) {
         const errorMessage = modelError instanceof Error ? modelError.message : String(modelError);
