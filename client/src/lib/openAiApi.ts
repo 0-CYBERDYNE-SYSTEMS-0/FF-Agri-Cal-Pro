@@ -5,8 +5,8 @@ interface Message {
   content: string;
 }
 
-// For demo purposes, we're using a mock API
-// In a real application, this would make calls to OpenAI API
+// Send a message to the conversation and get the AI response
+// This function communicates with our backend which calls the OpenAI API
 export async function getChatCompletion(
   conversationId: number,
   message: string
@@ -62,22 +62,44 @@ export async function getConversation(id: number): Promise<Message[]> {
 }
 
 export async function getAiSuggestion(prompt: string): Promise<string> {
-  // This is a mock function for demo purposes
-  // In a real app, this would send the prompt to OpenAI and return the response
-  
-  const suggestions: Record<string, string> = {
-    tomatoes: "For tomatoes, I suggest planting them in early spring after the last frost. They need at least 6 hours of sunlight daily and regular watering. Consider adding a trellis for support.",
-    compost: "Your compost pile should be turned weekly for best results. Keep a good mix of green (nitrogen-rich) and brown (carbon-rich) materials at a ratio of about 1:3.",
-    irrigation: "Based on current weather patterns, I recommend setting up your irrigation system to water plants in the early morning (5-7 AM) to minimize evaporation loss. Check soil moisture levels before watering.",
-    default: "I can provide planting schedules, crop rotation tips, and weather-based agricultural advice. For specific recommendations, please provide more details about your location and the crops you're working with."
-  };
-  
-  // Simple keyword matching
-  for (const [keyword, suggestion] of Object.entries(suggestions)) {
-    if (prompt.toLowerCase().includes(keyword)) {
-      return suggestion;
+  try {
+    // Create a temporary conversation with the prompt
+    const conversationId = await createConversation([
+      {
+        role: "user",
+        content: prompt
+      }
+    ]);
+    
+    // Get the conversation to retrieve the AI's response
+    const messages = await getConversation(conversationId);
+    
+    // Find the assistant's response (should be the last message)
+    const assistantMessage = messages.find(msg => msg.role === "assistant");
+    
+    if (assistantMessage) {
+      return assistantMessage.content;
+    } else {
+      throw new Error("No assistant response found");
     }
+  } catch (error) {
+    console.error("Error getting AI suggestion:", error);
+    
+    // Fallback responses in case of API failure
+    const fallbackSuggestions: Record<string, string> = {
+      tomatoes: "For tomatoes, I suggest planting them in early spring after the last frost. They need at least 6 hours of sunlight daily and regular watering. Consider adding a trellis for support.",
+      compost: "Your compost pile should be turned weekly for best results. Keep a good mix of green (nitrogen-rich) and brown (carbon-rich) materials at a ratio of about 1:3.",
+      irrigation: "Based on current weather patterns, I recommend setting up your irrigation system to water plants in the early morning (5-7 AM) to minimize evaporation loss. Check soil moisture levels before watering.",
+      default: "I can provide planting schedules, crop rotation tips, and weather-based agricultural advice. For specific recommendations, please provide more details about your location and the crops you're working with."
+    };
+    
+    // Simple keyword matching for fallback
+    for (const [keyword, suggestion] of Object.entries(fallbackSuggestions)) {
+      if (prompt.toLowerCase().includes(keyword)) {
+        return suggestion;
+      }
+    }
+    
+    return fallbackSuggestions.default;
   }
-  
-  return suggestions.default;
 }
