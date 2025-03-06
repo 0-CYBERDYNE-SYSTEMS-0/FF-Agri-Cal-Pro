@@ -95,8 +95,8 @@ export default function Projects() {
       name,
       description,
       status,
-      startDate: startDate ? new Date(startDate).toISOString() : null,
-      endDate: endDate ? new Date(endDate).toISOString() : null,
+      startDate: startDate ? new Date(startDate) : null,
+      endDate: endDate ? new Date(endDate) : null,
       progress: 0
     };
     
