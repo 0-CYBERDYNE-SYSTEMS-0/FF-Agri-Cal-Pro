@@ -47,6 +47,9 @@ export default function ChatInterface() {
     enabled: !!conversationId && isOpen
   });
   
+  // Get messages from active conversation
+  const messages: Message[] = activeConversation?.messages as Message[] || [];
+  
   // Create conversation mutation
   const createConversationMutation = useMutation({
     mutationFn: async () => {
@@ -54,7 +57,7 @@ export default function ChatInterface() {
         messages: [
           {
             role: "assistant",
-            content: "Hello! I'm your agricultural planning assistant. How can I help you today?"
+            content: "Hello! I'm your agricultural planning assistant. How can I help you today? I can help you plan your farming activities, create a calendar of events, or provide information on best practices for your crops based on your location and current weather conditions."
           }
         ]
       });
@@ -110,8 +113,6 @@ export default function ChatInterface() {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [activeConversation, isOpen]);
-  
-  const messages: Message[] = activeConversation?.messages as Message[] || [];
   
   // Detect calendar events in AI responses
   useEffect(() => {
