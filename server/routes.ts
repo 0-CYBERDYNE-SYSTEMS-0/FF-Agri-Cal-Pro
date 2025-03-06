@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
@@ -7,6 +7,37 @@ import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
 import { getWeatherInfo, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
+
+// Helper function to determine the current season based on date
+function getSeasonForDate(date: Date): string {
+  const month = date.getMonth();
+  const day = date.getDate();
+  const northernHemisphere = true; // Default to northern hemisphere
+  
+  // Adjust seasons based on hemisphere
+  if (northernHemisphere) {
+    if ((month === 11 && day >= 21) || month < 2 || (month === 2 && day <= 20)) {
+      return "Winter";
+    } else if ((month === 2 && day >= 21) || month < 5 || (month === 5 && day <= 20)) {
+      return "Spring";
+    } else if ((month === 5 && day >= 21) || month < 8 || (month === 8 && day <= 22)) {
+      return "Summer";
+    } else {
+      return "Fall";
+    }
+  } else {
+    // Southern hemisphere (seasons reversed)
+    if ((month === 11 && day >= 21) || month < 2 || (month === 2 && day <= 20)) {
+      return "Summer";
+    } else if ((month === 2 && day >= 21) || month < 5 || (month === 5 && day <= 20)) {
+      return "Fall";
+    } else if ((month === 5 && day >= 21) || month < 8 || (month === 8 && day <= 22)) {
+      return "Winter";
+    } else {
+      return "Spring";
+    }
+  }
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
@@ -471,12 +502,32 @@ function weatherIconToEmoji(iconCode: string): string {
         apiKey: process.env.OPENAI_API_KEY
       });
       
+      // Get location data for context from request headers or default
+      const userAgent = req.headers['user-agent'] || '';
+      let userLocation = 'Unknown Location';
+      
+      // Try to get location from query or use default
+      if (req.query.location) {
+        userLocation = req.query.location as string;
+      } else {
+        // Default location if not provided
+        userLocation = 'New York, USA';
+      }
+      
+      // Current date and time information
+      const now = new Date();
+      const dateTimeString = now.toLocaleString();
+      const season = getSeasonForDate(now);
+      
       // Make sure there's a system message defining the assistant's role
       if (!updatedMessages.some(msg => msg.role === "system")) {
         updatedMessages.unshift({
           role: "system",
           content: "You are Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
-          "Current date and time: " + new Date().toLocaleString() + "\n" +
+          "CONTEXTUAL INFORMATION:\n" +
+          "- Current date and time: " + dateTimeString + "\n" +
+          "- Current season: " + season + "\n" +
+          "- User location: " + userLocation + "\n\n" +
           "You must always consider date, time, and location in ALL your recommendations and activities. Time-sensitive agricultural advice is crucial for successful farming.\n\n" +
           "Your responsibilities:\n" +
           "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +

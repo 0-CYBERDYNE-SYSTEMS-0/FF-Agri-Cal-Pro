@@ -177,14 +177,27 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
       setIsLoadingSuggestion(true);
       setShowAiSuggestions(true);
       
-      // Create a prompt based on the event information so far
-      const prompt = `I'm planning an agricultural event titled "${title || 'my event'}". ${
-        description ? `Description: ${description}. ` : ''
+      // Get the selected project's details
+      const selectedProject = projects.find(p => p.id === parseInt(projectId));
+      
+      // Create a more detailed prompt based on the event information
+      const prompt = `I'm planning an agricultural project titled "${selectedProject?.name || 'my project'}". ${
+        selectedProject?.description ? `Project overview: ${selectedProject.description}. ` : ''
       }${
-        projectId ? `It's part of project: ${projects.find(p => p.id === parseInt(projectId))?.name}. ` : ''
+        title ? `I need to add a specific task: "${title}". ` : 'I need to break this down into specific tasks. '
+      }${
+        description ? `Task details: ${description}. ` : ''
       }${
         location ? `Location: ${location}. ` : ''
-      }Date: ${startDate}. Please provide a brief suggestion for this agricultural task.`;
+      }Starting date: ${startDate}.
+      
+      Please provide detailed agricultural planning advice for this task, including:
+      1. A brief description of the activity
+      2. Recommended timing and duration
+      3. Any weather considerations
+      4. Best practices for this agricultural activity
+      
+      Format the response to be easy to read in a calendar event description.`;
       
       const suggestion = await getAiSuggestion(prompt);
       setAiSuggestion(suggestion);
@@ -199,6 +212,110 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
   const applyAiSuggestion = () => {
     setDescription(aiSuggestion);
     setShowAiSuggestions(false);
+  };
+  
+  // Function to generate a series of events from an AI plan
+  const handleGenerateEventSeries = async () => {
+    try {
+      setIsLoadingSuggestion(true);
+      
+      // Get the selected project's details
+      const selectedProject = projects.find(p => p.id === parseInt(projectId));
+      
+      // Create a prompt to generate a series of events
+      const prompt = `I need to create a complete calendar for my agricultural project titled "${selectedProject?.name || 'my project'}". ${
+        selectedProject?.description ? `Project overview: ${selectedProject.description}. ` : ''
+      }
+      Starting date: ${startDate}.
+      ${selectedProject?.endDate ? `Ending date: ${new Date(selectedProject.endDate).toISOString().split('T')[0]}.` : ''}
+      ${location ? `Location: ${location}. ` : ''}
+      
+      Please generate a detailed timeline of agricultural events that would be part of this project, including:
+      1. A title for each task or event
+      2. A brief description of each task
+      3. When each task should be scheduled (exact date if possible)
+      4. Approximate duration for each task
+      
+      Format your response as a structured JSON array with fields: title, description, suggestedDate, durationHours`;
+      
+      const suggestion = await getAiSuggestion(prompt);
+      
+      // Try to parse the JSON from the AI response
+      let eventData: any[] = [];
+      try {
+        // Find the JSON part in the response (it might be wrapped in markdown code blocks)
+        const jsonMatch = suggestion.match(/```json\n([\s\S]*?)\n```/) || 
+                          suggestion.match(/```\n([\s\S]*?)\n```/) || 
+                          suggestion.match(/\[([\s\S]*?)\]/);
+        
+        const jsonText = jsonMatch ? jsonMatch[1] : suggestion;
+        eventData = JSON.parse(jsonText.includes('[') ? jsonText : `[${jsonText}]`);
+      } catch (parseError) {
+        console.error("Error parsing AI suggestion:", parseError);
+        toast({
+          title: "Error",
+          description: "Could not parse the AI-generated event plan. Please try again or create events manually.",
+          variant: "destructive",
+        });
+        setAiSuggestion(suggestion);
+        return;
+      }
+      
+      // Create multiple events based on the AI suggestion
+      for (const event of eventData) {
+        if (!event.title) continue;
+        
+        // Calculate start and end times
+        let startDateTime = new Date(event.suggestedDate || startDate);
+        if (isNaN(startDateTime.getTime())) {
+          startDateTime = new Date(startDate);
+        }
+        
+        // Set start time to 9 AM if not specified
+        startDateTime.setHours(9, 0, 0, 0);
+        
+        // Calculate end time based on duration (default to 1 hour)
+        const duration = event.durationHours || 1;
+        const endDateTime = new Date(startDateTime);
+        endDateTime.setHours(endDateTime.getHours() + duration);
+        
+        // Create the event
+        const eventData = {
+          title: event.title,
+          description: event.description || "",
+          startDate: startDateTime.toISOString(),
+          endDate: endDateTime.toISOString(),
+          projectId: projectId ? parseInt(projectId) : null,
+          location: location,
+          checkWeather: true,
+          isRecurring: false,
+          recurringPattern: null
+        };
+        
+        // Submit the event
+        try {
+          await createEventMutation.mutateAsync(eventData);
+        } catch (error) {
+          console.error("Error creating event:", error);
+        }
+      }
+      
+      toast({
+        title: "Events created",
+        description: `${eventData.length} events have been added to your calendar.`,
+      });
+      
+      onClose();
+    } catch (error) {
+      console.error("Error generating event series:", error);
+      toast({
+        title: "Error",
+        description: "There was an error creating events. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingSuggestion(false);
+    }
   };
 
   return (
@@ -389,26 +506,43 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
             </div>
           )}
           
-          <DialogFooter className="sm:justify-between">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={handleAskAi}
-              disabled={isLoadingSuggestion}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-primary" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-              </svg>
-              Ask AI for Suggestions
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Button 
+                type="button" 
+                variant="outline" 
+                className="flex-1"
+                onClick={handleAskAi}
+                disabled={isLoadingSuggestion}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-primary" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                Task Advice
+              </Button>
+              
+              <Button 
+                type="button" 
+                variant="outline" 
+                className="flex-1"
+                onClick={handleGenerateEventSeries}
+                disabled={isLoadingSuggestion || !projectId}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-primary" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
+                </svg>
+                Generate Calendar
+              </Button>
+            </div>
+            
             <Button 
               type="submit" 
-              className="bg-primary hover:bg-primary-dark"
+              className="bg-primary hover:bg-primary-dark w-full"
               disabled={createEventMutation.isPending}
             >
               {createEventMutation.isPending ? "Creating..." : "Create Event"}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
       </DialogContent>
     </Dialog>
