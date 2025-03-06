@@ -4,8 +4,11 @@ import { Input } from "@/components/ui/input";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Conversation } from "@shared/schema";
+import { Conversation, Project } from "@shared/schema";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { detectCalendarEventsInAIMessage, AICalendarEvent, createCalendarEventBatch, getOrCreateProject } from "@/lib/calendarService";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 interface Message {
   role: "user" | "assistant" | "system";
@@ -19,6 +22,13 @@ export default function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // Calendar event processing state
+  const [detectedEvents, setDetectedEvents] = useState<Partial<AICalendarEvent>[]>([]);
+  const [showEventConfirmDialog, setShowEventConfirmDialog] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [isProcessingEvents, setIsProcessingEvents] = useState(false);
+  const [eventProjectName, setEventProjectName] = useState("");
   
   // Get existing conversation or create new one
   const { data: conversations = [], isLoading: isLoadingConversations } = useQuery<Conversation[]>({
@@ -101,8 +111,114 @@ export default function ChatInterface() {
     }
   }, [activeConversation, isOpen]);
   
+  const messages: Message[] = activeConversation?.messages as Message[] || [];
+  
+  // Detect calendar events in AI responses
+  useEffect(() => {
+    if (!messages.length) return;
+    
+    // Find the last AI message
+    const lastAiMessageIndex = [...messages].reverse().findIndex(msg => msg.role === "assistant");
+    if (lastAiMessageIndex === -1) return;
+    
+    const lastAiMessage = [...messages].reverse()[lastAiMessageIndex];
+    
+    // Check if the message contains potential calendar events
+    const detectedEventsInMessage = detectCalendarEventsInAIMessage(lastAiMessage.content);
+    
+    if (detectedEventsInMessage.length > 0) {
+      // Set detected events and show dialog
+      setDetectedEvents(detectedEventsInMessage);
+      
+      // Try to extract project name from the conversation
+      const projectNameMatch = lastAiMessage.content.match(/project(?:\s+called|\s+titled|\s+named)?\s+["']([^"']+)["']/i);
+      if (projectNameMatch && projectNameMatch[1]) {
+        setEventProjectName(projectNameMatch[1]);
+      } else {
+        // Default project name
+        setEventProjectName("Agricultural Project");
+      }
+      
+      setShowEventConfirmDialog(true);
+    }
+  }, [messages]);
+  
   const toggleChat = () => {
     setIsOpen(!isOpen);
+  };
+  
+  // Handle creating events from AI suggestion
+  const handleCreateEvents = async () => {
+    if (detectedEvents.length === 0) return;
+    
+    setIsProcessingEvents(true);
+    
+    try {
+      // Fill in missing data in events
+      const completeEvents: AICalendarEvent[] = [];
+      
+      // Create or get project first
+      const project = await getOrCreateProject(
+        eventProjectName,
+        "Created from AI assistant conversation"
+      );
+      
+      // Default date if none provided
+      const defaultDate = new Date();
+      defaultDate.setHours(9, 0, 0, 0); // 9 AM
+      
+      const defaultEndDate = new Date(defaultDate);
+      defaultEndDate.setHours(defaultEndDate.getHours() + 1); // 1 hour later
+      
+      // Process each event
+      for (const event of detectedEvents) {
+        // Fill in missing required fields
+        const completeEvent: AICalendarEvent = {
+          title: event.title || "Agricultural Task",
+          description: event.description || "",
+          startDate: event.startDate || defaultDate.toISOString(),
+          endDate: event.endDate || defaultEndDate.toISOString(),
+          projectId: project.id,
+          location: event.location || "",
+          checkWeather: true
+        };
+        
+        completeEvents.push(completeEvent);
+      }
+      
+      // Create all events
+      await createCalendarEventBatch(completeEvents);
+      
+      // Show success message
+      toast({
+        title: "Events Created",
+        description: `Successfully added ${completeEvents.length} events to your calendar.`,
+      });
+      
+      // Update calendar data
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      
+      // Close dialog
+      setShowEventConfirmDialog(false);
+      setDetectedEvents([]);
+      
+      // Add confirmation message to the conversation
+      if (conversationId) {
+        await sendMessageMutation.mutateAsync({
+          conversationId,
+          message: `Thank you for creating these events. I've added ${completeEvents.length} events to my calendar.`
+        });
+      }
+    } catch (error) {
+      console.error("Error creating events:", error);
+      toast({
+        title: "Error",
+        description: "There was a problem creating events. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessingEvents(false);
+    }
   };
   
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -117,8 +233,6 @@ export default function ChatInterface() {
       console.error("Error sending message:", error);
     }
   };
-  
-  const messages: Message[] = activeConversation?.messages as Message[] || [];
 
   return (
     <>
@@ -134,6 +248,69 @@ export default function ChatInterface() {
           </svg>
         </Button>
       </div>
+      
+      {/* Calendar Event Confirmation Dialog */}
+      <Dialog open={showEventConfirmDialog} onOpenChange={setShowEventConfirmDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Calendar Events</DialogTitle>
+            <DialogDescription>
+              I found some potential events in our conversation. Would you like me to add these to your calendar?
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <Alert className="mb-4">
+              <AlertTitle>Project: {eventProjectName}</AlertTitle>
+              <AlertDescription>
+                Events will be added to this project. {detectedEvents.length} events detected.
+              </AlertDescription>
+            </Alert>
+            
+            <div className="max-h-[200px] overflow-y-auto space-y-2">
+              {detectedEvents.map((event, index) => (
+                <div key={index} className="p-3 bg-neutral-50 border border-neutral-200 rounded">
+                  <h4 className="font-medium">{event.title || "Untitled Event"}</h4>
+                  {event.startDate && (
+                    <p className="text-sm text-neutral-500">
+                      {new Date(event.startDate).toLocaleDateString()} 
+                      {event.endDate && ` to ${new Date(event.endDate).toLocaleDateString()}`}
+                    </p>
+                  )}
+                  {event.description && (
+                    <p className="text-sm text-neutral-700 line-clamp-2">{event.description}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <DialogFooter className="sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowEventConfirmDialog(false)}
+              disabled={isProcessingEvents}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreateEvents}
+              disabled={isProcessingEvents}
+            >
+              {isProcessingEvents ? (
+                <>
+                  <span className="mr-2">Creating Events...</span>
+                  <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                </>
+              ) : (
+                "Add to Calendar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       
       {/* Chat popup */}
       <div 
