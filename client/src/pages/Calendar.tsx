@@ -4,6 +4,7 @@ import MonthView from "@/components/calendar/MonthView";
 import WeekView from "@/components/calendar/WeekView";
 import DayView from "@/components/calendar/DayView";
 import YearView from "@/components/calendar/YearView";
+import ViewDebugger from "@/components/calendar/ViewDebugger";
 import { useQuery } from "@tanstack/react-query";
 import { Project } from "@shared/schema";
 import { WeatherForecast } from "@shared/schema";
@@ -11,15 +12,23 @@ import WeatherRow from "@/components/weather/WeatherRow";
 import ProjectCard from "@/components/project/ProjectCard";
 import { useLocation } from "wouter";
 import { useLocation as useLoc } from "@/contexts/LocationContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { useWeather } from "@/hooks/use-weather";
 
 export default function Calendar() {
-  const { view } = useCalendar();
+  const { view, forceRender } = useCalendar();
   const [_, setLocation] = useLocation();
   const { requestLocationPermission, location } = useLoc();
   const [locationRequested, setLocationRequested] = useState(false);
+  const [lastRenderedView, setLastRenderedView] = useState(view);
+
+  // Log view changes for debugging
+  useEffect(() => {
+    console.log("Current calendar view:", view);
+    // Update the last rendered view to track changes
+    setLastRenderedView(view);
+  }, [view, forceRender]);
 
   // useEffect(() => {
   //   requestLocationPermission();
@@ -38,19 +47,22 @@ export default function Calendar() {
   const { weatherData, isLoading: isLoadingWeather } = useWeather(location || undefined);
 
   // Render the appropriate calendar view based on the current view state
-  const renderCalendarView = () => {
+  // Using useMemo to ensure the view only re-renders when necessary
+  const calendarView = useMemo(() => {
+    console.log("Rendering view:", view, "forceRender:", forceRender);
+    
     switch (view) {
       case "day":
-        return <DayView />;
+        return <DayView key={`day-view-${forceRender}`} weatherData={weatherData} />;
       case "week":
-        return <WeekView />;
+        return <WeekView key={`week-view-${forceRender}`} weatherData={weatherData} />;
       case "year":
-        return <YearView />;
+        return <YearView key={`year-view-${forceRender}`} weatherData={weatherData} />;
       case "month":
       default:
-        return <MonthView weatherData={weatherData} />;
+        return <MonthView key={`month-view-${forceRender}`} weatherData={weatherData} />;
     }
-  };
+  }, [view, weatherData, forceRender]);
 
   const handleProjectSelect = (projectId: number) => {
     setLocation(`/projects?id=${projectId}`);
@@ -65,7 +77,7 @@ export default function Calendar() {
     <>
       <CalendarHeader />
       
-      {renderCalendarView()}
+      {calendarView}
 
       {!locationRequested && (
         <div className="mt-4 flex justify-center">
@@ -112,6 +124,9 @@ export default function Calendar() {
           )}
         </div>
       </div>
+      
+      {/* Add the ViewDebugger for visual feedback */}
+      <ViewDebugger />
     </>
   );
 }

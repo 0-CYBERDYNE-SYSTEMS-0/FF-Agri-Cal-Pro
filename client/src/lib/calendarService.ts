@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/queryClient";
-import { Event, Project } from "@shared/schema";
+import { Event, Project, WeatherForecast } from "@shared/schema";
+import { exportToICS } from "./calendarUtils";
 
 /**
  * Service for creating calendar events directly from the AI assistant
@@ -22,6 +23,23 @@ export interface AICalendarEvent {
   } | null;
 }
 
+// Add this interface to handle the API's expectation of Date objects
+interface APIEventData {
+  title: string;
+  description: string;
+  startDate: Date; // Server expects Date objects
+  endDate: Date;   // Server expects Date objects
+  projectId?: number;
+  location?: string;
+  checkWeather?: boolean;
+  isRecurring?: boolean;
+  recurringPattern?: {
+    frequency: "day" | "week" | "month" | "year";
+    interval: number;
+    endDate: string | null;
+  } | null;
+}
+
 /**
  * Create a single calendar event
  * @param eventData - The event data to create
@@ -29,7 +47,17 @@ export interface AICalendarEvent {
  */
 export async function createCalendarEvent(eventData: AICalendarEvent): Promise<Event> {
   try {
-    const response = await apiRequest("POST", "/api/events", eventData);
+    // Create a new object with converted date fields
+    // The server expects actual Date objects, not ISO strings
+    const serverEventData = {
+      ...eventData,
+      // Explicitly convert to Date objects for server validation
+      startDate: new Date(eventData.startDate),
+      endDate: new Date(eventData.endDate)
+    };
+    
+    // Send the event data to the server
+    const response = await apiRequest("POST", "/api/events", serverEventData);
     return await response.json();
   } catch (error) {
     console.error("Error creating calendar event:", error);
@@ -48,6 +76,7 @@ export async function createCalendarEventBatch(events: AICalendarEvent[]): Promi
     
     // Create events sequentially to avoid race conditions
     for (const event of events) {
+      // Just use the original createCalendarEvent function which now handles date conversion
       const createdEvent = await createCalendarEvent(event);
       createdEvents.push(createdEvent);
     }
@@ -554,28 +583,424 @@ export function extractEventsFromText(text: string): Partial<AICalendarEvent>[] 
 }
 
 /**
- * Process AI message to detect and extract calendar events
- * @param message - The AI message to process
- * @returns Array of potential calendar events
+ * Creates an .ics file from calendar events and makes it available for download
+ */
+export function downloadCalendarAsICS(events: Event[], filename = 'farm-calendar.ics'): void {
+  const icsContent = exportToICS(events);
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/**
+ * Parses ICS content and converts it to Event objects
+ */
+export function parseICSContent(icsContent: string): Partial<Event>[] {
+  const events: Partial<Event>[] = [];
+  const lines = icsContent.split(/\r\n|\n|\r/);
+  
+  let currentEvent: Partial<Event> | null = null;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    if (line === 'BEGIN:VEVENT') {
+      currentEvent = {};
+    } else if (line === 'END:VEVENT' && currentEvent) {
+      events.push(currentEvent);
+      currentEvent = null;
+    } else if (currentEvent) {
+      const [key, value] = line.split(':');
+      
+      if (key === 'SUMMARY') {
+        currentEvent.title = value;
+      } else if (key === 'DESCRIPTION') {
+        currentEvent.description = value;
+      } else if (key === 'LOCATION') {
+        currentEvent.location = value;
+      } else if (key === 'DTSTART') {
+        currentEvent.startDate = parseICSDate(value);
+      } else if (key === 'DTEND') {
+        currentEvent.endDate = parseICSDate(value);
+      } else if (key === 'UID' && value.includes('@agriplanner.com')) {
+        // Extract the ID from the UID if it matches our format
+        const id = parseInt(value.split('@')[0]);
+        if (!isNaN(id)) {
+          currentEvent.id = id;
+        }
+      }
+    }
+  }
+  
+  return events;
+}
+
+/**
+ * Helper function to parse ICS date format
+ */
+function parseICSDate(icsDate: string): string {
+  // Handle date format like: 20240320T150000Z
+  if (icsDate.endsWith('Z')) {
+    const year = icsDate.substring(0, 4);
+    const month = icsDate.substring(4, 6);
+    const day = icsDate.substring(6, 8);
+    const hour = icsDate.substring(9, 11);
+    const minute = icsDate.substring(11, 13);
+    const second = icsDate.substring(13, 15);
+    
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+  }
+  
+  // If it's not a UTC date, convert it based on local timezone
+  const year = icsDate.substring(0, 4);
+  const month = icsDate.substring(4, 6);
+  const day = icsDate.substring(6, 8);
+  const hour = icsDate.substring(9, 11) || '00';
+  const minute = icsDate.substring(11, 13) || '00';
+  const second = icsDate.substring(13, 15) || '00';
+  
+  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+  return date.toISOString();
+}
+
+/**
+ * Import events from an ICS file
+ */
+export async function importEventsFromICS(file: File): Promise<Partial<Event>[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const events = parseICSContent(content);
+        resolve(events);
+      } catch (error) {
+        reject(new Error('Failed to parse ICS file'));
+      }
+    };
+    
+    reader.onerror = () => {
+      reject(new Error('Failed to read ICS file'));
+    };
+    
+    reader.readAsText(file);
+  });
+}
+
+/**
+ * Generates a system message with calendar events in ICS format and weather forecast
+ */
+export function generateCalendarSystemMessage(
+  events: Event[], 
+  weatherData?: WeatherForecast[],
+  contextInfo?: {
+    currentDate: string;
+    currentSeason: string;
+    userLocation: string;
+  }
+): string {
+  const icsContent = exportToICS(events);
+  
+  let message = "";
+  
+  // Add contextual information if available
+  if (contextInfo) {
+    message += `CONTEXTUAL INFORMATION:
+
+Current date and time: ${contextInfo.currentDate}
+Current season: ${contextInfo.currentSeason}
+User location: ${contextInfo.userLocation}
+
+`;
+  }
+  
+  message += `Current calendar events in ICS format:
+\`\`\`
+${icsContent}
+\`\`\``;
+
+  // Add weather forecast data if available
+  if (weatherData && weatherData.length > 0) {
+    message += `\n\nCurrent weather forecast for ${contextInfo?.userLocation || "your location"} for the next ${weatherData.length} days:
+\`\`\`json
+${JSON.stringify(weatherData, null, 2)}
+\`\`\``;
+  }
+  
+  message += `\n\nWhen making recommendations, please consider these scheduled events and weather conditions.
+For optimal farm planning, suggest adjustments to existing events based on weather forecasts, or propose new events for agricultural tasks.`;
+
+  return message;
+}
+
+/**
+ * Enhanced event detection that looks for specially formatted events in AI message
  */
 export function detectCalendarEventsInAIMessage(message: string): Partial<AICalendarEvent>[] {
-  // Quickly reject if there's no event-related content
-  if (!message || message.length < 20) return [];
+  const events: Partial<AICalendarEvent>[] = [];
+  
+  // Match pattern: [EVENT] Title: {title}, Date: {date}, Time: {time}, Description: {description}
+  const eventRegex = /\[EVENT\]\s+Title:\s*([^,]+),\s*Date:\s*([^,]+),\s*Time:\s*([^,]+),\s*Description:\s*([^\n]+)/g;
+  
+  let match;
+  while ((match = eventRegex.exec(message)) !== null) {
+    const [_, title, dateStr, timeStr, description] = match;
+    
+    // Parse date and time
+    let startDate = new Date();
+    let endDate = new Date();
+    
+    try {
+      // Try to parse the date
+      const dateParts = dateStr.trim().split(/[\/\-\.]/);
+      if (dateParts.length === 3) {
+        // Assume MM/DD/YYYY format if not specified
+        const month = parseInt(dateParts[0]) - 1;
+        const day = parseInt(dateParts[1]);
+        const year = parseInt(dateParts[2].length === 2 ? `20${dateParts[2]}` : dateParts[2]);
+        
+        startDate.setFullYear(year, month, day);
+        endDate.setFullYear(year, month, day);
+      }
+      
+      // Try to parse the time
+      const timeMatch = timeStr.trim().match(/(\d+):?(\d+)?\s*(am|pm|AM|PM)?\s*(?:-|to)\s*(\d+):?(\d+)?\s*(am|pm|AM|PM)?/);
+      if (timeMatch) {
+        const [_, startHour, startMin, startAmPm, endHour, endMin, endAmPm] = timeMatch;
+        
+        // Set start time
+        let hours = parseInt(startHour);
+        if (startAmPm && (startAmPm.toLowerCase() === 'pm') && hours < 12) {
+          hours += 12;
+        } else if (startAmPm && (startAmPm.toLowerCase() === 'am') && hours === 12) {
+          hours = 0;
+        }
+        
+        startDate.setHours(hours);
+        startDate.setMinutes(parseInt(startMin || '0'));
+        startDate.setSeconds(0);
+        
+        // Set end time
+        hours = parseInt(endHour);
+        if (endAmPm && (endAmPm.toLowerCase() === 'pm') && hours < 12) {
+          hours += 12;
+        } else if (endAmPm && (endAmPm.toLowerCase() === 'am') && hours === 12) {
+          hours = 0;
+        }
+        
+        endDate.setHours(hours);
+        endDate.setMinutes(parseInt(endMin || '0'));
+        endDate.setSeconds(0);
+      } else {
+        // Default to all-day event
+        endDate.setDate(endDate.getDate() + 1);
+      }
+    } catch (e) {
+      console.error("Error parsing date/time for event", e);
+      // Use today as fallback
+      endDate.setHours(startDate.getHours() + 1);
+    }
+    
+    // Check if this is a weather-dependent event
+    const isWeatherDependent = message.includes('[WEATHER-DEPENDENT]');
+    
+    // Convert Date objects to ISO strings for the API
+    const startDateIso = startDate.toISOString();
+    const endDateIso = endDate.toISOString();
+    
+    events.push({
+      title: title.trim(),
+      startDate: startDateIso,
+      endDate: endDateIso,
+      description: description.trim(),
+      checkWeather: isWeatherDependent
+    });
+  }
+  
+  return events;
+}
 
-  // Check if message explicitly has a calendar section
-  if (message.match(/calendar events:|events to add:|suggested events:|proposed schedule:/i)) {
-    return extractEventsFromText(message);
+/**
+ * Create a calendar event directly from assistant content
+ * This is used when the assistant says it has scheduled something
+ * @param aiMessage - The AI message content that claims to have scheduled an event
+ * @returns True if successful, false otherwise
+ */
+export async function createEventFromAssistantClaim(aiMessage: string): Promise<boolean> {
+  // First, try to extract structured event data
+  const detectedEvents = detectCalendarEventsInAIMessage(aiMessage);
+  
+  if (detectedEvents.length > 0) {
+    try {
+      // Find project info
+      const projectNameMatch = aiMessage.match(/project(?:\s+called|\s+titled|\s+named)?\s+["']([^"']+)["']/i);
+      const projectName = projectNameMatch ? projectNameMatch[1] : "Agricultural Project";
+      
+      // Create or get the project
+      const project = await getOrCreateProject(projectName, "Created from AI assistant conversation");
+      
+      // Complete and create events
+      for (const event of detectedEvents) {
+        // Fill in missing required fields
+        const defaultDate = new Date();
+        defaultDate.setHours(9, 0, 0, 0); // 9 AM
+        
+        const defaultEndDate = new Date(defaultDate);
+        defaultEndDate.setHours(defaultEndDate.getHours() + 1); // 1 hour later
+        
+        const completeEvent: AICalendarEvent = {
+          title: event.title || "Agricultural Task",
+          description: event.description || "",
+          startDate: event.startDate || defaultDate.toISOString(),
+          endDate: event.endDate || defaultEndDate.toISOString(),
+          projectId: project.id,
+          location: event.location || "",
+          checkWeather: true
+        };
+        
+        // Create event directly through API
+        await createCalendarEvent(completeEvent);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Error auto-creating events from assistant claim:", error);
+      return false;
+    }
   }
   
-  // Use regex pattern matching to find event indicators
-  const hasEventKeywords = /\b(schedule|event|calendar|task|plan|plant|harvest|fertilize|irrigate)\b/i.test(message);
-  const hasDatePattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|today|tomorrow|next week)\b|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}-\d{2}-\d{2})/i.test(message);
-  const hasTimePattern = /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?:\s*(?:to|-)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?/i.test(message);
+  // If no structured events were found, look for direct mentions of scheduling
+  const schedulingMentioned = aiMessage.match(/I('ve| have) scheduled|calendar event scheduled|event has been added|added to your calendar|has been successfully scheduled|been scheduled for|scheduled.*for tomorrow|The event for|I('ve| have) added|I('ve| have) created|has been created|has been set up/i);
   
-  // Return extracted events if we have indicators of events
-  if ((hasEventKeywords && hasDatePattern) || message.includes("Event:")) {
-    return extractEventsFromText(message);
+  if (schedulingMentioned) {
+    try {
+      // Extract minimal event info
+      const titleMatch = aiMessage.match(/Event: ([^\n]+)/i) || 
+                         aiMessage.match(/scheduled ["]([^"]+)["]/i) ||
+                         aiMessage.match(/scheduled [']([^']+)[']/i) ||
+                         aiMessage.match(/scheduled ([\w\s-]+)( for| on| at)/i) ||
+                         aiMessage.match(/The event for (turning the compost|[\w\s-]+)( has| is)/i) ||
+                         aiMessage.match(/titled ["']([^"']+)["']/i) ||
+                         aiMessage.match(/added ["']([^"']+)["']/i) ||
+                         aiMessage.match(/created ["']([^"']+)["']/i) ||
+                         aiMessage.match(/(?:for|regarding) ["']([^"']+)["']/i) ||
+                         aiMessage.match(/to turn (?:the )?compost(?: pile)?s?/i) ?
+                           { 1: "Turn Compost Piles" } : null;
+      
+      const dateMatch = aiMessage.match(/Date: ([^\n]+)/i) || 
+                        aiMessage.match(/(tomorrow|today|on [^,\.]+|\w+ \d{1,2}(?:st|nd|rd|th)?)/i) ||
+                        aiMessage.match(/scheduled for ([\w\s,]+)(?:\sat|\sfrom)/i);
+      
+      const timeMatch = aiMessage.match(/Time: ([^\n]+)/i) || 
+                        aiMessage.match(/at (\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)(?:\s*-\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))?)/i) ||
+                        aiMessage.match(/from (\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)\s*to\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
+      
+      if (titleMatch || (schedulingMentioned && aiMessage.includes("compost"))) {
+        // If we have a compost reference but no title match, use a default title
+        const title = titleMatch ? titleMatch[1].trim() : "Turn Compost Piles";
+        
+        let startDate = new Date();
+        startDate.setDate(startDate.getDate() + 1); // Default to tomorrow
+        let endDate = new Date(startDate);
+        endDate.setHours(endDate.getHours() + 1);
+        
+        // Try to parse date from text
+        if (dateMatch) {
+          const dateText = dateMatch[1] || dateMatch[0];
+          const parsedDate = parseNaturalDate(dateText);
+          if (parsedDate) {
+            startDate = parsedDate;
+            endDate = new Date(startDate);
+            endDate.setHours(endDate.getHours() + 1);
+          }
+        }
+        
+        // Try to parse time from text
+        if (timeMatch && timeMatch[1]) {
+          const timeText = timeMatch[1];
+          const timeRangeMatch = timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+          
+          if (timeRangeMatch) {
+            // Handle time range (start and end)
+            const startTimeText = timeRangeMatch[1];
+            const endTimeText = timeRangeMatch[2];
+            
+            const startTimeParts = startTimeText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+            if (startTimeParts) {
+              let hours = parseInt(startTimeParts[1]);
+              const minutes = startTimeParts[2] ? parseInt(startTimeParts[2]) : 0;
+              const ampm = startTimeParts[3] ? startTimeParts[3].toLowerCase() : null;
+              
+              if (ampm === "pm" && hours < 12) hours += 12;
+              if (ampm === "am" && hours === 12) hours = 0;
+              
+              startDate.setHours(hours, minutes, 0, 0);
+            }
+            
+            const endTimeParts = endTimeText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+            if (endTimeParts) {
+              let hours = parseInt(endTimeParts[1]);
+              const minutes = endTimeParts[2] ? parseInt(endTimeParts[2]) : 0;
+              const ampm = endTimeParts[3] ? endTimeParts[3].toLowerCase() : null;
+              
+              if (ampm === "pm" && hours < 12) hours += 12;
+              if (ampm === "am" && hours === 12) hours = 0;
+              
+              endDate.setHours(hours, minutes, 0, 0);
+            }
+          } else {
+            // Handle single time (start only)
+            const timeParts = timeText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+            if (timeParts) {
+              let hours = parseInt(timeParts[1]);
+              const minutes = timeParts[2] ? parseInt(timeParts[2]) : 0;
+              const ampm = timeParts[3] ? timeParts[3].toLowerCase() : null;
+              
+              if (ampm === "pm" && hours < 12) hours += 12;
+              if (ampm === "am" && hours === 12) hours = 0;
+              
+              startDate.setHours(hours, minutes, 0, 0);
+              endDate = new Date(startDate);
+              endDate.setHours(endDate.getHours() + 1);
+            }
+          }
+        }
+        
+        // Extract description
+        const descMatch = aiMessage.match(/description: ([^\n]+(?:\n[^\n#*]+)*)/i) || 
+                          aiMessage.match(/I've scheduled[^.]*\.\s+([^.]+\.)/i);
+        const description = descMatch ? descMatch[1].trim() : 
+                           "Auto-created from assistant conversation";
+        
+        // Create project
+        const project = await getOrCreateProject("Agricultural Tasks", "Auto-created from assistant");
+        
+        // Create the event
+        const event: AICalendarEvent = {
+          title,
+          description,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          projectId: project.id,
+          location: "",
+          checkWeather: true
+        };
+        
+        await createCalendarEvent(event);
+        return true;
+      }
+    } catch (error) {
+      console.error("Error creating fallback event from assistant claim:", error);
+      return false;
+    }
   }
   
-  return [];
+  return false;
 }

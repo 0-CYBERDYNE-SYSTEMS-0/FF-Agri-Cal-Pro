@@ -7,6 +7,8 @@ import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
 import { getWeatherInfo, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
+import { eq } from "drizzle-orm";
+import { events, Event } from "@shared/schema";
 
 // Helper function to determine the current season based on date
 function getSeasonForDate(date: Date): string {
@@ -236,7 +238,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      const eventData = insertEventSchema.parse({ ...req.body, userId });
+      
+      // Handle both string and Date objects for dates
+      const { startDate, endDate, ...restBody } = req.body;
+      
+      // Convert dates if they're strings
+      const parsedData = {
+        ...restBody,
+        userId,
+        startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+      };
+      
+      // Now parse with the schema
+      const eventData = insertEventSchema.parse(parsedData);
       const event = await storage.createEvent(eventData);
       return res.status(201).json(event);
     } catch (err) {
@@ -519,43 +534,45 @@ function weatherIconToEmoji(iconCode: string): string {
       const dateTimeString = now.toLocaleString();
       const season = getSeasonForDate(now);
       
-      // Make sure there's a system message defining the assistant's role
-      if (!updatedMessages.some(msg => msg.role === "system")) {
-        updatedMessages.unshift({
-          role: "system",
-          content: "You are Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
-          "CONTEXTUAL INFORMATION:\n" +
-          "- Current date and time: " + dateTimeString + "\n" +
-          "- Current season: " + season + "\n" +
-          "- User location: " + userLocation + "\n\n" +
-          "You must always consider date, time, and location in ALL your recommendations and activities. Time-sensitive agricultural advice is crucial for successful farming.\n\n" +
-          "Your responsibilities:\n" +
-          "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +
-          "2. Suggest sustainable farming practices appropriate for different crops and climates\n" +
-          "3. Help users plan their agricultural calendar with detailed timelines\n" +
-          "4. Offer recommendations for dealing with various weather conditions and climate challenges\n" +
-          "5. Assist with pest management and soil health optimization\n" +
-          "6. Provide advice on water conservation and irrigation planning\n\n" +
-          "AVAILABLE TOOLS:\n" +
-          "1. Web Search: Use the search_web function to find up-to-date information when needed, especially for specific agricultural data, seasonal information, or regional farming practices.\n" +
-          "2. Weather Tool: Use the get_weather function to get real-time weather data and agricultural recommendations for a specific location. This helps provide location-specific advice based on current and forecasted weather conditions.\n\n" +
-          "FORMATTING INSTRUCTIONS:\n" +
-          "- Format your responses using Markdown to improve readability\n" +
-          "- Use headers (## and ###) to organize information\n" +
-          "- Use bullet points or numbered lists for steps and recommendations\n" +
-          "- Use bold or italic for emphasis on important points\n" +
-          "- Format tables when presenting comparative data\n" +
-          "- Use code blocks for representing schedules or technical instructions\n" +
-          "- Include emojis where appropriate to make content more engaging\n\n" +
-          "Respond with detailed, actionable information that farmers can implement immediately. Include specific timelines, measurements, and practical steps whenever possible."
-        });
-      }
+      // Prepare messages for API
+      const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
       
-      // Convert messages to the format expected by OpenAI
-      const apiMessages = updatedMessages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+Current date: ${dateTimeString}
+Current season: ${season}
+User location: ${userLocation}
+
+CRITICAL: When the user asks you to schedule an event, you MUST ALWAYS use the create_calendar_event function. NEVER respond as if you've scheduled something without explicitly calling this function.
+
+Follow these strict requirements:
+1. ONLY claim to have scheduled an event AFTER successfully using the create_calendar_event function
+2. NEVER say phrases like "I've scheduled..." or "Event scheduled..." unless you've actually called the function
+3. If you want to create an event, use the function FIRST, then mention it in your response
+4. If you need a project to organize events, first call get_or_create_project, then create events with that project ID
+
+For calendar events:
+1. Always include a clear title
+2. Set appropriate start and end times in ISO format (YYYY-MM-DDTHH:MM:SSZ)
+3. Set checkWeather to true for outdoor activities
+4. Include a detailed description with helpful tips
+5. Set a location when relevant
+
+Example function call for create_calendar_event:
+{
+  "title": "Turn Compost Piles",
+  "description": "Rotate compost piles to ensure proper aeration and decomposition",
+  "startDate": "2023-07-15T14:00:00Z",
+  "endDate": "2023-07-15T15:00:00Z",
+  "location": "North Field",
+  "checkWeather": true
+}
+
+Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
+      
+      // Add system message and user's message
+      const apiMessages = [
+        { role: "system", content: systemMessage },
+        ...updatedMessages
+      ];
       
       // Define tools for web search and weather data
       const tools = [
@@ -590,6 +607,68 @@ function weatherIconToEmoji(iconCode: string): string {
                 }
               },
               required: ["location"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "create_calendar_event",
+            description: "Create a new calendar event for agricultural activities",
+            parameters: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "The title of the event (e.g., 'Turn Compost Piles', 'Plant Tomatoes')"
+                },
+                description: {
+                  type: "string",
+                  description: "Detailed description of the event, including any special instructions"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Start date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                location: {
+                  type: "string",
+                  description: "Location where the event will take place (e.g., 'North Field', 'Greenhouse')"
+                },
+                projectId: {
+                  type: "number",
+                  description: "ID of the project this event belongs to (optional)"
+                },
+                checkWeather: {
+                  type: "boolean",
+                  description: "Whether this event is weather-dependent (default: true for agricultural tasks)"
+                }
+              },
+              required: ["title", "startDate", "endDate"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "get_or_create_project",
+            description: "Get or create a project for organizing related agricultural activities",
+            parameters: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "The name of the project (e.g., 'Spring Planting', 'Orchard Maintenance')"
+                },
+                description: {
+                  type: "string",
+                  description: "Description of the project's purpose and goals"
+                }
+              },
+              required: ["name"]
             }
           }
         }
@@ -701,6 +780,60 @@ function weatherIconToEmoji(iconCode: string): string {
           } else {
             toolResponse = "I couldn't retrieve weather information for that location. Please check the spelling or try a different location.";
           }
+        } else if (functionName === "create_calendar_event") {
+          const eventData = functionArgs;
+          console.log("Creating calendar event from assistant:", eventData);
+          
+          // Validate the event data
+          const validatedEvent = insertEventSchema.parse({
+            ...eventData,
+            startDate: new Date(eventData.startDate),
+            endDate: new Date(eventData.endDate),
+            userId: 1, // Default user ID
+          });
+          
+          // Insert the event using the storage interface
+          const newEvent = await storage.createEvent(validatedEvent);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            event: newEvent
+          });
+        } else if (functionName === "get_or_create_project") {
+          const projectData = functionArgs;
+          console.log("Getting or creating project from assistant:", projectData.name);
+          
+          // Get all projects for user 1
+          const allProjects = await storage.getProjectsByUser(1);
+          
+          // Check if project already exists
+          const existingProject = allProjects.find(project => 
+            project.name.toLowerCase() === projectData.name.toLowerCase()
+          );
+          
+          if (existingProject) {
+            toolResponse = JSON.stringify({
+              success: true,
+              project: existingProject,
+              isNew: false
+            });
+          } else {
+            // Create new project using the storage interface
+            const newProject = await storage.createProject({
+              name: projectData.name,
+              description: projectData.description || "",
+              status: "active",
+              startDate: new Date(),
+              endDate: null,
+              userId: 1 // Default user ID
+            });
+            
+            toolResponse = JSON.stringify({
+              success: true,
+              project: newProject,
+              isNew: true
+            });
+          }
         }
         
         // Add the tool response to messages array
@@ -734,6 +867,246 @@ function weatherIconToEmoji(iconCode: string): string {
       return res.status(200).json(updatedConversation);
     } catch (err) {
       console.error("OpenAI API Error:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Get calendar events as ICS file
+  app.get("/api/events/ics", async (req: Request, res: Response) => {
+    try {
+      // Demo user id = 1 for simplicity (in this demo app we auto-login as demo user)
+      const userId = 1;
+      
+      // Get all events for the user
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Convert to ICS format
+      const icsContent = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Agri-Cal//Farm Friend//EN',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH'
+      ];
+      
+      userEvents.forEach(event => {
+        const startDate = new Date(event.startDate);
+        const endDate = new Date(event.endDate);
+        
+        // Format dates as YYYYMMDDTHHMMSSZ
+        const formatICSDate = (date: Date) => {
+          return date.toISOString().replace(/-|:|\.\d+/g, '').slice(0, 15) + 'Z';
+        };
+        
+        const eventBlock = [
+          'BEGIN:VEVENT',
+          `UID:${event.id}@agriplanner.com`,
+          `DTSTAMP:${formatICSDate(new Date())}`,
+          `DTSTART:${formatICSDate(startDate)}`,
+          `DTEND:${formatICSDate(endDate)}`,
+          `SUMMARY:${event.title}`,
+        ];
+        
+        if (event.description) {
+          eventBlock.push(`DESCRIPTION:${event.description.replace(/\n/g, '\\n')}`);
+        }
+        
+        if (event.location) {
+          eventBlock.push(`LOCATION:${event.location}`);
+        }
+        
+        // Add custom properties for Agri-Cal specific features
+        if (event.checkWeather) {
+          eventBlock.push('X-AGRICAL-CHECKWEATHER:TRUE');
+        }
+        
+        if (event.projectId) {
+          eventBlock.push(`X-AGRICAL-PROJECTID:${event.projectId}`);
+        }
+        
+        eventBlock.push('END:VEVENT');
+        icsContent.push(...eventBlock);
+      });
+      
+      icsContent.push('END:VCALENDAR');
+      
+      // Set the response headers for an ICS file download
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=farm-calendar.ics');
+      
+      return res.status(200).send(icsContent.join('\r\n'));
+    } catch (err) {
+      console.error("Error generating ICS file:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Get contextual information for the assistant
+  app.get("/api/assistant/context", async (req: Request, res: Response) => {
+    try {
+      // Get location from query params or use default
+      const location = (req.query.location as string) || "New York";
+      const userId = 1; // Default demo user
+      
+      // Get weather data
+      const weatherData = await getWeatherInfo(location);
+      if (!weatherData) {
+        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      }
+      
+      // Get user's calendar events
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Determine current season
+      const currentDate = new Date();
+      const currentSeason = getSeasonForDate(currentDate);
+      
+      // Build context object
+      const context = {
+        timestamp: currentDate.toISOString(),
+        location: location,
+        season: currentSeason,
+        weather: {
+          current: {
+            temperature: Math.round((weatherData.current.temp * 9/5) + 32),
+            conditions: weatherData.current.weather_description,
+            humidity: weatherData.current.humidity,
+            wind: Math.round(weatherData.current.wind_speed * 2.237)
+          },
+          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+            date: day.date,
+            temperature: Math.round((day.temp * 9/5) + 32),
+            conditions: day.weather_description
+          }))
+        },
+        events: userEvents.map(event => ({
+          id: event.id,
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate,
+          isWeatherDependent: event.checkWeather
+        }))
+      };
+      
+      return res.status(200).json(context);
+    } catch (err) {
+      console.error("Error fetching assistant context:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Assistant function calling API endpoints
+  // Create a calendar event
+  app.post("/api/assistant/functions/create-event", async (req: Request, res: Response) => {
+    try {
+      const eventData = req.body;
+      console.log("Creating calendar event from assistant:", eventData);
+      
+      // Handle both string and Date objects for dates
+      const { startDate, endDate, ...restData } = eventData;
+      
+      // Convert dates if they're strings
+      const parsedData = {
+        ...restData,
+        userId: 1, // Default user ID
+        startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+      };
+      
+      // Validate the event data
+      const validatedEvent = insertEventSchema.parse(parsedData);
+      
+      // Insert the event using the storage interface
+      const newEvent = await storage.createEvent(validatedEvent);
+      
+      return res.status(200).json({
+        success: true,
+        event: newEvent
+      });
+    } catch (err) {
+      console.error("Error creating event from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+  
+  // Get or create a project
+  app.post("/api/assistant/functions/get-or-create-project", async (req: Request, res: Response) => {
+    try {
+      const { name, description } = req.body;
+      console.log("Getting or creating project from assistant:", name);
+      
+      // Get all projects for user 1
+      const allProjects = await storage.getProjectsByUser(1);
+      
+      // Check if project already exists
+      const existingProject = allProjects.find(project => 
+        project.name.toLowerCase() === name.toLowerCase()
+      );
+      
+      if (existingProject) {
+        return res.status(200).json({
+          success: true,
+          project: existingProject,
+          isNew: false
+        });
+      }
+      
+      // Create new project using the storage interface
+      const newProject = await storage.createProject({
+        name,
+        description: description || "",
+        status: "active",
+        startDate: new Date(),
+        endDate: null,
+        userId: 1 // Default user ID
+      });
+      
+      return res.status(200).json({
+        success: true,
+        project: newProject,
+        isNew: true
+      });
+    } catch (err) {
+      console.error("Error getting or creating project from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Create multiple calendar events in a batch
+  app.post("/api/assistant/functions/create-events-batch", async (req: Request, res: Response) => {
+    try {
+      const { events: eventsBatch } = req.body;
+      console.log("Creating calendar events batch from assistant:", eventsBatch.length, "events");
+      
+      const createdEvents = [];
+      
+      // Process each event
+      for (const eventData of eventsBatch) {
+        // Handle both string and Date objects for dates
+        const { startDate, endDate, ...restData } = eventData;
+        
+        // Convert dates if they're strings
+        const parsedData = {
+          ...restData,
+          userId: 1, // Default user ID
+          startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+          endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+        };
+        
+        // Validate the event data
+        const validatedEvent = insertEventSchema.parse(parsedData);
+        
+        // Insert the event
+        const newEvent = await storage.createEvent(validatedEvent);
+        createdEvents.push(newEvent);
+      }
+      
+      return res.status(200).json({
+        success: true,
+        events: createdEvents
+      });
+    } catch (err) {
+      console.error("Error creating events batch from assistant:", err);
       return handleApiError(err, res);
     }
   });

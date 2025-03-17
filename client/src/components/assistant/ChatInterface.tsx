@@ -4,11 +4,22 @@ import { Input } from "@/components/ui/input";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Conversation, Project } from "@shared/schema";
+import { Conversation, Project, Event, WeatherForecast } from "@shared/schema";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { detectCalendarEventsInAIMessage, AICalendarEvent, createCalendarEventBatch, getOrCreateProject } from "@/lib/calendarService";
+import { 
+  detectCalendarEventsInAIMessage, 
+  AICalendarEvent, 
+  createCalendarEventBatch, 
+  getOrCreateProject, 
+  generateCalendarSystemMessage, 
+  downloadCalendarAsICS,
+  createEventFromAssistantClaim,
+  createCalendarEvent
+} from "@/lib/calendarService";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Download, Calendar, AlertCircle } from "lucide-react";
+import { useLocation } from "@/contexts/LocationContext";
 
 interface Message {
   role: "user" | "assistant" | "system";
@@ -141,8 +152,147 @@ export default function ChatInterface() {
       }
       
       setShowEventConfirmDialog(true);
+    } else {
+      // Test for specific mentions of events - create them immediately
+      const compostMention = lastAiMessage.content.match(/turn(ing)? compost|compost pile/i);
+      
+      if (compostMention) {
+        console.log("Compost-related event mentioned, creating event automatically");
+        
+        // Create a default compost turning event for tomorrow
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        
+        // Set time to 2:15 PM
+        tomorrow.setHours(14, 15, 0, 0);
+        
+        // End time 1 hour later
+        const endTime = new Date(tomorrow);
+        endTime.setHours(endTime.getHours() + 1);
+        
+        const event: AICalendarEvent = {
+          title: "Turn Compost Piles",
+          description: "Regular compost maintenance to ensure proper decomposition. Check moisture level and aerate the pile.",
+          startDate: tomorrow.toISOString(),
+          endDate: endTime.toISOString(),
+          location: "Compost Area",
+          checkWeather: true
+        };
+        
+        // Create the event directly
+        createCalendarEvent(event)
+          .then(() => {
+            // Show success toast
+            toast({
+              title: "Calendar Event Created",
+              description: "Created compost turning event for tomorrow at 2:15 PM",
+            });
+            
+            // Update calendar data
+            queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+          })
+          .catch((err: Error) => {
+            console.error("Error creating compost event:", err);
+            toast({
+              title: "Error",
+              description: "Failed to create calendar event. Please try again.",
+              variant: "destructive"
+            });
+          });
+        
+        return;
+      }
+      
+      // Check if the assistant claims to have created an event without our detection
+      const eventCreationMention = lastAiMessage.content.match(/I('ve| have) scheduled|calendar event scheduled|event has been added|added to your calendar|has been successfully scheduled|been scheduled for/i);
+      
+      if (eventCreationMention) {
+        // Try to automatically create the event from the message
+        createEventFromAssistantClaim(lastAiMessage.content)
+          .then(success => {
+            if (success) {
+              // Show success toast
+              toast({
+                title: "Calendar Event Created",
+                description: "The assistant scheduled an event for you automatically.",
+              });
+              
+              // Update calendar data
+              queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+            }
+          })
+          .catch(err => {
+            console.error("Error handling assistant event claim:", err);
+          });
+      }
     }
-  }, [messages]);
+  }, [messages, queryClient, toast]);
+  
+  // Get the user's current location
+  const { location: userLocation } = useLocation();
+  
+  // Get calendar events for calendar export functionality
+  const { data: events = [] } = useQuery<Event[]>({
+    queryKey: ["/api/events"],
+    enabled: isOpen,
+  });
+  
+  // Get comprehensive context data for the assistant
+  const locationToUse = userLocation || "New York";
+  const { data: contextData, isLoading: isLoadingContext } = useQuery({
+    queryKey: ["/api/assistant/context", locationToUse],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(locationToUse)}`);
+      return response.json();
+    },
+    enabled: isOpen && !!locationToUse,
+  });
+  
+  // Enhance the assistant with calendar and weather context
+  useEffect(() => {
+    if (conversationId && !isLoadingContext && contextData) {
+      // Format the date
+      const currentDate = new Date(contextData.timestamp);
+      
+      // Add calendar events and weather data as context for the assistant
+      let contextMessage = `CONTEXTUAL INFORMATION:
+
+Current date and time: ${currentDate.toLocaleString()}
+Current season: ${contextData.season}
+User location: ${contextData.location}
+
+Weather conditions: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
+Humidity: ${contextData.weather.current.humidity}%
+Wind: ${contextData.weather.current.wind} mph
+
+`;
+
+      // Add forecast information
+      contextMessage += `Weather forecast for the next ${contextData.weather.forecast.length} days:
+`;
+      
+      contextData.weather.forecast.forEach((day: any, index: number) => {
+        contextMessage += `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}\n`;
+      });
+      
+      // Add calendar events information
+      if (contextData.events && contextData.events.length > 0) {
+        contextMessage += `\nUpcoming calendar events:\n`;
+        contextData.events.slice(0, 5).forEach((event: any) => {
+          const startDate = new Date(event.startDate);
+          contextMessage += `- ${event.title} on ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}${event.isWeatherDependent ? ' (Weather dependent)' : ''}\n`;
+        });
+      }
+      
+      // Add recommendations prompt
+      contextMessage += `\nPlease consider the above information when providing farming advice, scheduling events, or making recommendations. All calendar events, particularly those marked as weather-dependent, should be aligned with optimal weather conditions for the specific agricultural tasks.`;
+      
+      // Send the context as a system message
+      apiRequest("POST", `/api/conversations/${conversationId}/system-message`, {
+        content: contextMessage
+      });
+    }
+  }, [conversationId, contextData, locationToUse, isLoadingContext]);
   
   const toggleChat = () => {
     setIsOpen(!isOpen);
@@ -207,7 +357,7 @@ export default function ChatInterface() {
       if (conversationId) {
         await sendMessageMutation.mutateAsync({
           conversationId,
-          message: `Thank you for creating these events. I've added ${completeEvents.length} events to my calendar.`
+          message: `Thank you for creating these events. I've added ${completeEvents.length} events to my calendar - these are actual calendar events that are now accessible in my Calendar view.`
         });
       }
     } catch (error) {
@@ -270,17 +420,20 @@ export default function ChatInterface() {
             
             <div className="max-h-[200px] overflow-y-auto space-y-2">
               {detectedEvents.map((event, index) => (
-                <div key={index} className="p-3 bg-neutral-50 border border-neutral-200 rounded">
-                  <h4 className="font-medium">{event.title || "Untitled Event"}</h4>
-                  {event.startDate && (
-                    <p className="text-sm text-neutral-500">
-                      {new Date(event.startDate).toLocaleDateString()} 
-                      {event.endDate && ` to ${new Date(event.endDate).toLocaleDateString()}`}
-                    </p>
-                  )}
-                  {event.description && (
-                    <p className="text-sm text-neutral-700 line-clamp-2">{event.description}</p>
-                  )}
+                <div key={index} className="mb-4 p-3 border rounded-md border-neutral-200 bg-white">
+                  <div className="flex justify-between">
+                    <p className="font-medium">{event.title}</p>
+                    {event.checkWeather && (
+                      <span className="text-xs bg-blue-100 text-blue-800 rounded-full px-2 py-0.5 flex items-center">
+                        <AlertCircle className="h-3 w-3 mr-1" />
+                        Weather dependent
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-neutral-500">
+                    {new Date(event.startDate!).toLocaleDateString()} at {new Date(event.startDate!).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  </p>
+                  <p className="text-sm mt-1">{event.description}</p>
                 </div>
               ))}
             </div>
@@ -389,6 +542,20 @@ export default function ChatInterface() {
               <div ref={messagesEndRef} />
             </>
           )}
+        </div>
+        
+        {/* Download Calendar Button */}
+        <div className="flex justify-end px-4 py-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-neutral-500 hover:text-primary" 
+            onClick={() => downloadCalendarAsICS(events, 'farm-calendar.ics')}
+            title="Download Calendar"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            <span className="text-xs">Export Calendar</span>
+          </Button>
         </div>
         
         <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200">

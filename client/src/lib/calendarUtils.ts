@@ -104,8 +104,9 @@ export function exportToICS(events: Event[]): string {
   ];
   
   events.forEach(event => {
-    const startDate = new Date(event.startDate);
-    const endDate = new Date(event.endDate);
+    // Handle both Date objects and ISO strings
+    const startDate = event.startDate instanceof Date ? event.startDate : new Date(event.startDate);
+    const endDate = event.endDate instanceof Date ? event.endDate : new Date(event.endDate);
     
     // Format dates as YYYYMMDDTHHMMSSZ
     const formatICSDate = (date: Date) => {

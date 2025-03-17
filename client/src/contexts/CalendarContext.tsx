@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
 import { Event } from "@shared/schema";
 import { formatDate } from "@/lib/calendarUtils";
 
@@ -15,6 +15,7 @@ interface CalendarContextType {
   goToPrev: () => void;
   goToNext: () => void;
   formatCurrentMonthYear: () => string;
+  forceRender: number;
 }
 
 // Create context with default values
@@ -28,7 +29,8 @@ const CalendarContext = createContext<CalendarContextType>({
   goToToday: () => {},
   goToPrev: () => {},
   goToNext: () => {},
-  formatCurrentMonthYear: () => ""
+  formatCurrentMonthYear: () => "",
+  forceRender: 0
 });
 
 export function CalendarProvider({ children }: { children: ReactNode }) {
@@ -36,6 +38,20 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<CalendarViewType>("month");
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [forceRender, setForceRender] = useState(0);
+
+  // Enhanced setView function with callback to ensure state updates
+  const setViewAndUpdate = useCallback((newView: CalendarViewType) => {
+    console.log(`Changing view from ${view} to ${newView}`);
+    setView(newView);
+    // Increment the force render counter to trigger re-renders
+    setForceRender(prev => prev + 1);
+  }, [view]);
+
+  // Log whenever view changes
+  useEffect(() => {
+    console.log("CalendarProvider view changed to:", view);
+  }, [view]);
 
   const goToToday = useCallback(() => {
     setCurrentDate(new Date());
@@ -98,11 +114,12 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     events,
     isLoading,
     setCurrentDate,
-    setView,
+    setView: setViewAndUpdate,
     goToToday,
     goToPrev,
     goToNext,
-    formatCurrentMonthYear
+    formatCurrentMonthYear,
+    forceRender
   };
 
   return (

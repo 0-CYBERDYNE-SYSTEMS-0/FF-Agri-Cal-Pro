@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Event } from "@shared/schema";
+import { Event, WeatherForecast } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { formatDate, isToday, getEventsForDay } from "@/lib/calendarUtils";
@@ -66,7 +66,11 @@ function HourRow({
   );
 }
 
-export default function WeekView() {
+interface WeekViewProps {
+  weatherData?: WeatherForecast[];
+}
+
+export default function WeekView({ weatherData }: WeekViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { currentDate } = useCalendar();

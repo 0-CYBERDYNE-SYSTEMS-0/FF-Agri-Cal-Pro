@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
 import EventModal from "./EventModal";
 
@@ -10,12 +10,17 @@ type ViewButtonProps = {
 };
 
 function ViewButton({ label, isActive, onClick }: ViewButtonProps) {
+  const handleClick = () => {
+    console.log(`Clicked ${label} view button`);
+    onClick();
+  };
+
   return (
     <button
       className={`px-4 py-2 border-r border-neutral-200 ${
         isActive ? "text-primary font-medium" : "text-neutral-600 hover:text-primary transition"
       }`}
-      onClick={onClick}
+      onClick={handleClick}
     >
       {label}
     </button>
@@ -24,7 +29,18 @@ function ViewButton({ label, isActive, onClick }: ViewButtonProps) {
 
 export default function CalendarHeader() {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { view, setView, currentDate, formatCurrentMonthYear, goToPrev, goToNext, goToToday } = useCalendar();
+  const { view, setView, currentDate, formatCurrentMonthYear, goToPrev, goToNext, goToToday, forceRender } = useCalendar();
+
+  useEffect(() => {
+    console.log("CalendarHeader view:", view, "forceRender:", forceRender);
+  }, [view, forceRender]);
+
+  const changeView = (newView: "day" | "week" | "month" | "year") => {
+    console.log(`Changing view to: ${newView}`);
+    if (newView !== view) {
+      setView(newView);
+    }
+  };
 
   return (
     <>
@@ -37,24 +53,28 @@ export default function CalendarHeader() {
           <div className="flex items-center space-x-3">
             <div className="flex bg-white rounded-md shadow-sm">
               <ViewButton 
+                key={`day-btn-${forceRender}`}
                 label="Day" 
                 isActive={view === "day"} 
-                onClick={() => setView("day")} 
+                onClick={() => changeView("day")} 
               />
-              <ViewButton 
+              <ViewButton
+                key={`week-btn-${forceRender}`}
                 label="Week" 
                 isActive={view === "week"} 
-                onClick={() => setView("week")} 
+                onClick={() => changeView("week")} 
               />
-              <ViewButton 
+              <ViewButton
+                key={`month-btn-${forceRender}`}
                 label="Month" 
                 isActive={view === "month"} 
-                onClick={() => setView("month")} 
+                onClick={() => changeView("month")} 
               />
-              <ViewButton 
+              <ViewButton
+                key={`year-btn-${forceRender}`}
                 label="Year" 
                 isActive={view === "year"} 
-                onClick={() => setView("year")} 
+                onClick={() => changeView("year")} 
               />
             </div>
             <Button onClick={() => setIsModalOpen(true)} className="bg-primary hover:bg-primary-dark">
