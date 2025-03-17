@@ -15,7 +15,8 @@ const LocationContext = createContext<LocationContextType>({
   coordinates: null,
   isLoading: true,
   error: null,
-  requestLocationPermission: () => console.log("Location provider not available, using default location"),
+  requestLocationPermission: () =>
+    console.log("Location provider not available, using default location"),
 });
 
 /**
@@ -23,7 +24,10 @@ const LocationContext = createContext<LocationContextType>({
  */
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState<string | null>(null);
-  const [coordinates, setCoordinates] = useState<{ lat: number; lon: number } | null>(null);
+  const [coordinates, setCoordinates] = useState<{
+    lat: number;
+    lon: number;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +42,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
 
   // Get location from browser's geolocation API
   const getLocationFromBrowser = () => {
+    console.log("getLocationFromBrowser called"); // Added logging
     setIsLoading(true);
     setError(null);
 
@@ -49,16 +54,17 @@ export function LocationProvider({ children }: { children: ReactNode }) {
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
+        console.log("getCurrentPosition success:", position); // Added logging
         const { latitude, longitude } = position.coords;
         setCoordinates({ lat: latitude, lon: longitude });
-        
+
         // Use our API instead of direct call to OpenWeather API
         try {
           // Use the backend API to do reverse geocoding
           const response = await fetch(
             `/api/weather-data?lat=${latitude}&lon=${longitude}`
           );
-          
+
           if (response.ok) {
             const data = await response.json();
             if (data && data.location) {
@@ -66,30 +72,36 @@ export function LocationProvider({ children }: { children: ReactNode }) {
               saveLocationToStorage(data.location);
             } else {
               // If we can't resolve a city name, use coordinates as a string
-              const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+              const locationString = `${latitude.toFixed(2)},${longitude.toFixed(
+                2
+              )}`;
               setLocation(locationString);
               saveLocationToStorage(locationString);
             }
           } else {
             // Fallback to coordinates if geocoding fails
-            const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+            const locationString = `${latitude.toFixed(2)},${longitude.toFixed(
+              2
+            )}`;
             setLocation(locationString);
             saveLocationToStorage(locationString);
           }
         } catch (err) {
           console.error("Error in reverse geocoding:", err);
           // Fallback to coordinates
-          const locationString = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+          const locationString = `${latitude.toFixed(2)},${longitude.toFixed(
+            2
+          )}`;
           setLocation(locationString);
           saveLocationToStorage(locationString);
         }
-        
+
         setIsLoading(false);
       },
       (err) => {
-        console.error("Error getting location:", err);
+        console.error("Error getting location:", err); // Added logging
         setError(`Error getting location: ${err.message}`);
-        
+
         // Try to use saved location if available
         const savedLocation = localStorage.getItem("userLocation");
         if (savedLocation) {
@@ -100,7 +112,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
           setLocation("New York");
           saveLocationToStorage("New York");
         }
-        
+
         setIsLoading(false);
       },
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
@@ -110,7 +122,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   // Initialize location from localStorage or set default on mount
   useEffect(() => {
     const savedLocation = localStorage.getItem("userLocation");
-    
+
     if (savedLocation) {
       setLocation(savedLocation);
       setIsLoading(false);
@@ -122,6 +134,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestLocationPermission = () => {
+    console.log("requestLocationPermission called"); // Added logging
     getLocationFromBrowser();
   };
 

@@ -1,41 +1,51 @@
 import { useQuery } from "@tanstack/react-query";
 import { Event, WeatherForecast } from "@shared/schema";
-import { getCalendarDays, isSameMonth, isToday, getEventsForDay } from "@/lib/calendarUtils";
-import { useState, useEffect } from "react";
+import {
+  getCalendarDays,
+  isSameMonth,
+  isToday,
+  getEventsForDay,
+} from "@/lib/calendarUtils";
+import { useState } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
-import { useLocation } from "@/contexts/LocationContext";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getWeatherForecast } from "@/lib/openWeatherApi";
 
-function CalendarDay({ 
-  day, 
-  currentMonth, 
-  events,
-  weatherData,
-  onClick
-}: { 
-  day: Date; 
+interface CalendarDayProps {
+  day: Date;
   currentMonth: number;
   events: Event[];
   weatherData: WeatherForecast[] | undefined;
   onClick: () => void;
-}) {
-  const isCurrentMonth = isSameMonth(day, new Date(new Date().getFullYear(), currentMonth));
+}
+
+function CalendarDay({
+  day,
+  currentMonth,
+  events,
+  weatherData,
+  onClick,
+}: CalendarDayProps) {
+  const isCurrentMonth = isSameMonth(
+    day,
+    new Date(new Date().getFullYear(), currentMonth)
+  );
   const isTodayDate = isToday(day);
   const dayEvents = getEventsForDay(events, day);
   const hasEvents = dayEvents.length > 0;
-  
+
   // Find weather data for this day if available
-  const weather = weatherData?.find(forecast => {
+  const weather = weatherData?.find((forecast) => {
     const forecastDate = new Date(forecast.date);
-    return forecastDate.getDate() === day.getDate() && 
-           forecastDate.getMonth() === day.getMonth() && 
-           forecastDate.getFullYear() === day.getFullYear();
+    return (
+      forecastDate.getDate() === day.getDate() &&
+      forecastDate.getMonth() === day.getMonth() &&
+      forecastDate.getFullYear() === day.getFullYear()
+    );
   });
 
   return (
-    <div 
+    <div
       className={`bg-white p-2 h-32 overflow-y-auto calendar-day ${
         !isCurrentMonth ? "text-neutral-400" : ""
       } ${isTodayDate ? "today bg-accent-light font-bold text-primary" : ""} ${
@@ -45,20 +55,26 @@ function CalendarDay({
     >
       <div className="flex justify-between items-center">
         <div className="text-xs">
-          {weather && <span title={`${weather.temperature}°F - ${weather.weatherDescription}`}>{weather.icon}</span>}
+          {weather && (
+            <span
+              title={`${weather.temperature}°F - ${weather.weatherDescription}`}
+            >
+              {weather.icon}
+            </span>
+          )}
         </div>
         <div>{day.getDate()}</div>
       </div>
-      
+
       {dayEvents.map((event) => (
-        <div 
-          key={event.id} 
+        <div
+          key={event.id}
           className={`mt-1 px-1 py-0.5 text-xs rounded ${
-            event.projectId === 1 
-              ? "bg-primary text-white" 
-              : event.projectId === 2 
-                ? "bg-secondary text-white" 
-                : "bg-accent rounded text-primary-dark"
+            event.projectId === 1
+              ? "bg-primary text-white"
+              : event.projectId === 2
+              ? "bg-secondary text-white"
+              : "bg-accent rounded text-primary-dark"
           }`}
         >
           {event.title}
@@ -68,22 +84,15 @@ function CalendarDay({
   );
 }
 
-export default function MonthView() {
+interface MonthViewProps {
+    weatherData: WeatherForecast[] | undefined;
+}
+
+export default function MonthView({ weatherData }: MonthViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [weatherData, setWeatherData] = useState<WeatherForecast[]>();
   const { currentDate } = useCalendar();
-  // Use optional location context - safe fallback if not in provider
-  let locationValue: string | null = null;
-  try {
-    // This will throw if not in a LocationProvider
-    const { location } = useLocation();
-    locationValue = location;
-  } catch (e) {
-    // Silently handle the missing location provider
-    console.log("Location provider not available, using default location");
-  }
-  
+
   const { data: events = [], isLoading } = useQuery<Event[]>({
     queryKey: ["/api/events"],
   });
@@ -91,20 +100,6 @@ export default function MonthView() {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const calendarDays = getCalendarDays(year, month);
-  
-  // Fetch weather data when the component mounts or location changes
-  useEffect(() => {
-    const fetchWeatherData = async () => {
-      try {
-        const data = await getWeatherForecast(locationValue || undefined);
-        setWeatherData(data);
-      } catch (error) {
-        console.error("Error fetching weather data for calendar:", error);
-      }
-    };
-    
-    fetchWeatherData();
-  }, [locationValue]);
 
   const handleDayClick = (day: Date) => {
     setSelectedDate(day);
@@ -115,7 +110,10 @@ export default function MonthView() {
     return (
       <div className="grid grid-cols-7 gap-px bg-neutral-200">
         {Array.from({ length: 7 }).map((_, i) => (
-          <div key={`header-${i}`} className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+          <div
+            key={`header-${i}`}
+            className="bg-white p-2 text-center text-sm font-medium text-neutral-600"
+          >
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i]}
           </div>
         ))}
@@ -134,22 +132,36 @@ export default function MonthView() {
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {/* Calendar Days Header */}
         <div className="grid grid-cols-7 gap-px bg-neutral-200">
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Sun</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Mon</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Tue</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Wed</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Thu</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Fri</div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">Sat</div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Sun
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Mon
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Tue
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Wed
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Thu
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Fri
+          </div>
+          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+            Sat
+          </div>
         </div>
-        
+
         {/* Calendar Grid */}
         <div className="grid grid-cols-7 gap-px bg-neutral-200">
           {calendarDays.map((day, index) => (
-            <CalendarDay 
-              key={index} 
-              day={day} 
-              currentMonth={month} 
+            <CalendarDay
+              key={index}
+              day={day}
+              currentMonth={month}
               events={events}
               weatherData={weatherData}
               onClick={() => handleDayClick(day)}
@@ -158,9 +170,9 @@ export default function MonthView() {
         </div>
       </div>
 
-      <EventModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <EventModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         selectedDate={selectedDate}
       />
     </>

@@ -10,18 +10,32 @@ import { WeatherForecast } from "@shared/schema";
 import WeatherRow from "@/components/weather/WeatherRow";
 import ProjectCard from "@/components/project/ProjectCard";
 import { useLocation } from "wouter";
+import { useLocation as useLoc } from "@/contexts/LocationContext";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { useWeather } from "@/hooks/use-weather";
 
 export default function Calendar() {
   const { view } = useCalendar();
   const [_, setLocation] = useLocation();
-  
+  const { requestLocationPermission, location } = useLoc();
+  const [locationRequested, setLocationRequested] = useState(false);
+
+  // useEffect(() => {
+  //   requestLocationPermission();
+  // }, []);
+
+  const handleGetLocation = () => {
+    requestLocationPermission();
+    setLocationRequested(true);
+  };
+
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
   });
 
-  const { data: weatherData = [], isLoading: isLoadingWeather } = useQuery<WeatherForecast[]>({
-    queryKey: ["/api/weather"],
-  });
+  // Use the useWeather hook which properly handles location updates
+  const { weatherData, isLoading: isLoadingWeather } = useWeather(location || undefined);
 
   // Render the appropriate calendar view based on the current view state
   const renderCalendarView = () => {
@@ -34,7 +48,7 @@ export default function Calendar() {
         return <YearView />;
       case "month":
       default:
-        return <MonthView />;
+        return <MonthView weatherData={weatherData} />;
     }
   };
 
@@ -52,13 +66,20 @@ export default function Calendar() {
       <CalendarHeader />
       
       {renderCalendarView()}
+
+      {!locationRequested && (
+        <div className="mt-4 flex justify-center">
+          <Button onClick={handleGetLocation}>Get Location</Button>
+        </div>
+      )}
       
       {/* Weather Forecast Section */}
       <div className="mt-8">
         <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
         <WeatherRow 
           forecasts={weatherData} 
-          isLoading={isLoadingWeather} 
+          isLoading={isLoadingWeather}
+          location={location}
         />
       </div>
       

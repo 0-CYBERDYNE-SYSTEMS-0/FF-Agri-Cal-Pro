@@ -9,6 +9,7 @@ import { useAuth } from "./contexts/AuthContext";
 import { useEffect, Suspense } from "react";
 import ChatInterface from "./components/assistant/ChatInterface";
 import { Loader2 } from "lucide-react";
+import { LocationProvider } from "./contexts/LocationContext";
 
 function Router() {
   return (
@@ -38,15 +39,17 @@ function App() {
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     }>
-      <div className="flex flex-col h-screen">
-        <Header />
-        <main className="flex-1 overflow-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <Router />
-          </div>
-        </main>
-        <ChatInterface />
-      </div>
+      <LocationProvider>
+        <div className="flex flex-col h-screen">
+          <Header />
+          <main className="flex-1 overflow-auto">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+              <Router />
+            </div>
+          </main>
+          <ChatInterface />
+        </div>
+      </LocationProvider>
     </Suspense>
   );
 }
