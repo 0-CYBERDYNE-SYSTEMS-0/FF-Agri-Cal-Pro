@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext, ReactNode } from "react";
+import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from "react";
 
 // Define the shape of our context
 interface LocationContextType {
@@ -28,33 +28,53 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     lat: number;
     lon: number;
   } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Add refs to prevent multiple simultaneous lookups
+  const isLookingUpRef = useRef(false);
+  const lastLookupTimeRef = useRef(0);
 
   // Save location to localStorage
-  const saveLocationToStorage = (loc: string) => {
+  const saveLocationToStorage = useCallback((loc: string) => {
     try {
       localStorage.setItem("userLocation", loc);
     } catch (err) {
       console.error("Could not save location to localStorage:", err);
     }
-  };
+  }, []);
 
   // Get location from browser's geolocation API
-  const getLocationFromBrowser = () => {
-    console.log("getLocationFromBrowser called"); // Added logging
+  const getLocationFromBrowser = useCallback(() => {
+    // Prevent multiple simultaneous lookups
+    if (isLookingUpRef.current) {
+      console.log("Location lookup already in progress, skipping");
+      return;
+    }
+    
+    // Limit frequency to once per minute
+    const now = Date.now();
+    if (now - lastLookupTimeRef.current < 60000) { // 1 minute cooldown
+      console.log("Location lookup requested too soon, skipping");
+      return;
+    }
+    
+    isLookingUpRef.current = true;
+    lastLookupTimeRef.current = now;
+    
+    console.log("Starting location lookup");
     setIsLoading(true);
     setError(null);
 
     if (!navigator.geolocation) {
       setError("Geolocation is not supported by your browser");
       setIsLoading(false);
+      isLookingUpRef.current = false;
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        console.log("getCurrentPosition success:", position); // Added logging
         const { latitude, longitude } = position.coords;
         setCoordinates({ lat: latitude, lon: longitude });
 
@@ -97,9 +117,10 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         }
 
         setIsLoading(false);
+        isLookingUpRef.current = false;
       },
       (err) => {
-        console.error("Error getting location:", err); // Added logging
+        console.error("Error getting location:", err);
         setError(`Error getting location: ${err.message}`);
 
         // Try to use saved location if available
@@ -114,10 +135,11 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         }
 
         setIsLoading(false);
+        isLookingUpRef.current = false;
       },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 } // 5 minute cache for coordinates
     );
-  };
+  }, [saveLocationToStorage]);
 
   // Initialize location from localStorage or set default on mount
   useEffect(() => {
@@ -125,27 +147,24 @@ export function LocationProvider({ children }: { children: ReactNode }) {
 
     if (savedLocation) {
       setLocation(savedLocation);
-      setIsLoading(false);
     } else {
       // Default location if nothing saved and no permission yet
       setLocation("New York");
-      setIsLoading(false);
     }
   }, []);
 
-  const requestLocationPermission = () => {
-    console.log("requestLocationPermission called"); // Added logging
+  const requestLocationPermission = useCallback(() => {
     getLocationFromBrowser();
-  };
+  }, [getLocationFromBrowser]);
 
-  // Create the context value
-  const value = {
+  // Create the context value using memoization to prevent unnecessary re-renders
+  const value = React.useMemo(() => ({
     location,
     coordinates,
     isLoading,
     error,
     requestLocationPermission,
-  };
+  }), [location, coordinates, isLoading, error, requestLocationPermission]);
 
   return (
     <LocationContext.Provider value={value}>

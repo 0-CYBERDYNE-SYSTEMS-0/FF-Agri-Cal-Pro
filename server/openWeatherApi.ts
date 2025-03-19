@@ -4,6 +4,10 @@
 import axios from 'axios';
 import { WeatherForecast } from '@shared/schema';
 
+// Add a cache for weather data
+const weatherCache: Record<string, { data: any, timestamp: number }> = {};
+const CACHE_EXPIRY = 15 * 60 * 1000; // 15 minutes in milliseconds
+
 export interface GeocodingResult {
   name: string;
   lat: number;
@@ -343,60 +347,80 @@ function celsiusToFahrenheit(celsius: number): number {
  */
 export async function getWeatherInfo(location: string): Promise<WeatherResponse | null> {
   try {
-    // First geocode the location to get coordinates
-    const geoData = await geocodeLocation(location);
-    if (!geoData) {
-      console.error("Could not find coordinates for location:", location);
+    // Check if we have cached data for this location
+    const now = Date.now();
+    if (weatherCache[location] && (now - weatherCache[location].timestamp < CACHE_EXPIRY)) {
+      console.log(`Using cached weather data for ${location}`);
+      return weatherCache[location].data;
+    }
+    
+    // If no cached data or cache expired, fetch from API
+    console.log(`Fetching fresh weather data for ${location}`);
+    const geocodingResult = await geocodeLocation(location);
+    
+    if (!geocodingResult) {
       return null;
     }
     
-    // Get current weather
-    const currentWeather = await getCurrentWeather(geoData.lat, geoData.lon);
-    if (!currentWeather) {
-      console.error("Could not retrieve current weather for location:", location);
+    const { lat, lon } = geocodingResult;
+    
+    // Get current weather and forecast data
+    const [currentWeatherData, forecastData] = await Promise.all([
+      getCurrentWeather(lat, lon),
+      getForecast(lat, lon)
+    ]);
+    
+    if (!currentWeatherData || !forecastData) {
       return null;
     }
     
-    // Get forecast
-    const forecastData = await getForecast(geoData.lat, geoData.lon);
-    if (!forecastData) {
-      console.error("Could not retrieve forecast for location:", location);
-      return null;
-    }
+    // Process forecast data into more usable format
+    const processedForecast = processDailyForecast(forecastData);
     
-    // Process forecast data into daily forecasts
-    const processedForecasts = processDailyForecast(forecastData);
+    // Format the location string
+    const locationString = geocodingResult.state 
+      ? `${geocodingResult.name}, ${geocodingResult.country}, ${geocodingResult.state}`
+      : `${geocodingResult.name}, ${geocodingResult.country}`;
     
-    // Convert temperature values from Celsius to Fahrenheit
-    const formattedForecasts = processedForecasts.map(forecast => ({
-      ...forecast,
-      temp: celsiusToFahrenheit(forecast.temp),
-      temp_min: celsiusToFahrenheit(forecast.temp_min),
-      temp_max: celsiusToFahrenheit(forecast.temp_max),
-      feels_like: celsiusToFahrenheit(forecast.feels_like),
-      pressure: forecast.pressure || currentWeather.main.pressure,
-      visibility: forecast.visibility || currentWeather.visibility,
-      uv_index: 0 // Not available in standard API
-    }));
-    
-    // Format response
-    return {
-      location: geoData.name + (geoData.state ? `, ${geoData.state}` : "") + (geoData.country ? `, ${geoData.country}` : ""),
+    // Create the response object
+    const response: WeatherResponse = {
+      location: locationString,
       current: {
-        temp: celsiusToFahrenheit(currentWeather.main.temp),
-        feels_like: celsiusToFahrenheit(currentWeather.main.feels_like),
-        temp_min: celsiusToFahrenheit(currentWeather.main.temp_min),
-        temp_max: celsiusToFahrenheit(currentWeather.main.temp_max),
-        humidity: currentWeather.main.humidity,
-        wind_speed: Math.round(currentWeather.wind.speed),
-        weather_description: currentWeather.weather[0].description,
-        icon: currentWeather.weather[0].icon,
-        pressure: currentWeather.main.pressure,
-        visibility: currentWeather.visibility,
+        temp: celsiusToFahrenheit(currentWeatherData.main.temp),
+        feels_like: celsiusToFahrenheit(currentWeatherData.main.feels_like),
+        temp_min: celsiusToFahrenheit(currentWeatherData.main.temp_min),
+        temp_max: celsiusToFahrenheit(currentWeatherData.main.temp_max),
+        humidity: currentWeatherData.main.humidity,
+        wind_speed: (currentWeatherData.wind.speed * 2.237).toFixed(1), // Convert from m/s to mph
+        weather_description: currentWeatherData.weather[0].description,
+        icon: currentWeatherData.weather[0].icon,
+        pressure: currentWeatherData.main.pressure,
+        visibility: currentWeatherData.visibility
       },
-      forecast: formattedForecasts,
-      alerts: []
+      forecast: processedForecast.map(day => ({
+        date: day.date,
+        dayOfWeek: day.dayOfWeek,
+        temp: celsiusToFahrenheit(day.temp),
+        temp_min: celsiusToFahrenheit(day.temp_min),
+        temp_max: celsiusToFahrenheit(day.temp_max),
+        feels_like: celsiusToFahrenheit(day.feels_like),
+        weather_description: day.weather_description,
+        icon: day.icon,
+        wind: Math.round(day.wind * 2.237), // Convert from m/s to mph
+        humidity: day.humidity,
+        precipitation: day.precipitation,
+        pressure: day.pressure,
+        visibility: day.visibility
+      }))
     };
+    
+    // Cache the result
+    weatherCache[location] = {
+      data: response,
+      timestamp: now
+    };
+    
+    return response;
     
   } catch (error) {
     console.error("Error getting weather info:", error);

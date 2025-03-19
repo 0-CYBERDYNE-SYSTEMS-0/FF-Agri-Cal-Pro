@@ -10,6 +10,7 @@ import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getProjectColor } from "@/lib/colorUtils";
 
 interface CalendarDayProps {
   day: Date;
@@ -68,24 +69,23 @@ function CalendarDay({
         <div>{day.getDate()}</div>
       </div>
 
-      {dayEvents.map((event) => (
-        <div
-          key={event.id}
-          className={`mt-1 px-1 py-0.5 text-xs rounded cursor-pointer hover:opacity-80 ${
-            event.projectId === 1
-              ? "bg-primary text-white"
-              : event.projectId === 2
-              ? "bg-secondary text-white"
-              : "bg-accent rounded text-primary-dark"
-          }`}
-          onClick={(e) => {
-            e.stopPropagation(); // Prevent day click
-            onEventClick(event.id);
-          }}
-        >
-          {event.title}
-        </div>
-      ))}
+      {dayEvents.map((event) => {
+        // Handle case where projectId might be null or undefined
+        const projectColor = getProjectColor(event.projectId || undefined);
+        return (
+          <div
+            key={event.id}
+            className={`mt-1 px-2 py-1 text-xs rounded-md cursor-pointer hover:opacity-90 flex items-center shadow-sm border border-l-4 ${projectColor.border} bg-white`}
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent day click
+              onEventClick(event.id);
+            }}
+          >
+            <span className={`w-2 h-2 rounded-full ${projectColor.bg} mr-1.5 flex-shrink-0`}></span>
+            <span className="line-clamp-1 text-neutral-800">{event.title}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

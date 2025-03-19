@@ -61,6 +61,19 @@ export default function ChatInterface() {
   // Get messages from active conversation
   const messages: Message[] = activeConversation?.messages as Message[] || [];
   
+  // Get the user's current location
+  const { location: userLocation, requestLocationPermission } = useLocation();
+  
+  // Request location permission when chat is opened
+  useEffect(() => {
+    if (isOpen) {
+      // Only request if we don't already have a location
+      if (!userLocation || userLocation === "New York") {
+        requestLocationPermission();
+      }
+    }
+  }, [isOpen, userLocation, requestLocationPermission]);
+  
   // Create conversation mutation
   const createConversationMutation = useMutation({
     mutationFn: async () => {
@@ -228,9 +241,6 @@ export default function ChatInterface() {
     }
   }, [messages, queryClient, toast]);
   
-  // Get the user's current location
-  const { location: userLocation } = useLocation();
-  
   // Get calendar events for calendar export functionality
   const { data: events = [] } = useQuery<Event[]>({
     queryKey: ["/api/events"],
@@ -238,15 +248,23 @@ export default function ChatInterface() {
   });
   
   // Get comprehensive context data for the assistant
-  const locationToUse = userLocation || "New York";
+  const locationToUse = userLocation || "";
   const { data: contextData, isLoading: isLoadingContext } = useQuery({
     queryKey: ["/api/assistant/context", locationToUse],
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(locationToUse)}`);
+      const location = locationToUse || "New York"; // Fallback to New York only at API call time
+      const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(location)}`);
       return response.json();
     },
-    enabled: isOpen && !!locationToUse,
+    enabled: isOpen && !!conversationId,
   });
+  
+  // Re-fetch context data when location changes
+  useEffect(() => {
+    if (conversationId && userLocation) {
+      queryClient.invalidateQueries({ queryKey: ["/api/assistant/context"] });
+    }
+  }, [userLocation, conversationId, queryClient]);
   
   // Enhance the assistant with calendar and weather context
   useEffect(() => {
@@ -261,19 +279,26 @@ Current date and time: ${currentDate.toLocaleString()}
 Current season: ${contextData.season}
 User location: ${contextData.location}
 
-Weather conditions: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
+`;
+
+      // Only add weather if it exists in the context data
+      if (contextData.weather && contextData.weather.current) {
+        contextMessage += `Weather conditions: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
 Humidity: ${contextData.weather.current.humidity}%
 Wind: ${contextData.weather.current.wind} mph
 
 `;
 
-      // Add forecast information
-      contextMessage += `Weather forecast for the next ${contextData.weather.forecast.length} days:
+        // Add forecast information
+        if (contextData.weather.forecast && contextData.weather.forecast.length > 0) {
+          contextMessage += `Weather forecast for the next ${contextData.weather.forecast.length} days:
 `;
-      
-      contextData.weather.forecast.forEach((day: any, index: number) => {
-        contextMessage += `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}\n`;
-      });
+          
+          contextData.weather.forecast.forEach((day: any, index: number) => {
+            contextMessage += `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}\n`;
+          });
+        }
+      }
       
       // Add calendar events information
       if (contextData.events && contextData.events.length > 0) {
@@ -292,7 +317,7 @@ Wind: ${contextData.weather.current.wind} mph
         content: contextMessage
       });
     }
-  }, [conversationId, contextData, locationToUse, isLoadingContext]);
+  }, [conversationId, contextData, isLoadingContext]);
   
   const toggleChat = () => {
     setIsOpen(!isOpen);

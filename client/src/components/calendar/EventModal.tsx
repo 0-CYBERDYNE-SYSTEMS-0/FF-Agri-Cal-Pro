@@ -12,6 +12,7 @@ import { Project } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { getAiSuggestion } from "@/lib/openAiApi";
+import { getProjectColor } from "@/lib/colorUtils";
 
 interface EventModalProps {
   isOpen: boolean;
@@ -399,13 +400,25 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     }
   };
 
+  // Get the currently selected project and its color
+  const selectedProject = projects.find(p => p.id === parseInt(projectId));
+  const projectColor = selectedProject ? getProjectColor(selectedProject) : null;
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg font-medium text-neutral-900">
-            {editEventId ? "Edit Event" : "Add New Event"}
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-lg font-medium text-neutral-900">
+              {editEventId ? "Edit Event" : "Add New Event"}
+            </DialogTitle>
+            {projectColor && (
+              <div className="flex items-center">
+                <div className={`w-3 h-3 rounded-full ${projectColor.bg}`}></div>
+                <span className={`text-sm ${projectColor.lightText}`}>{selectedProject?.name}</span>
+              </div>
+            )}
+          </div>
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -471,15 +484,25 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
               value={projectId} 
               onValueChange={setProjectId}
             >
-              <SelectTrigger className="w-full mt-1">
+              <SelectTrigger className={`w-full mt-1 ${projectColor ? `border-l-4 ${projectColor.border}` : ''}`}>
                 <SelectValue placeholder="Select a project" />
               </SelectTrigger>
               <SelectContent>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={String(project.id)}>
-                    {project.name}
-                  </SelectItem>
-                ))}
+                {projects.map((project) => {
+                  const projectColor = getProjectColor(project);
+                  return (
+                    <SelectItem 
+                      key={project.id} 
+                      value={String(project.id)}
+                      className="flex items-center"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${projectColor.bg}`}></div>
+                        <span>{project.name}</span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
                 <SelectItem value="new">+ Create New Project</SelectItem>
               </SelectContent>
             </Select>

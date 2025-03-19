@@ -23,6 +23,7 @@ export const projects = pgTable("projects", {
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
   progress: integer("progress").default(0),
+  color: text("color"), // Custom color code (hex, rgb, etc)
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
@@ -76,7 +77,8 @@ export const insertProjectSchema = createInsertSchema(projects).pick({
   status: true,
   startDate: true,
   endDate: true,
-  progress: true
+  progress: true,
+  color: true
 });
 
 export const insertEventSchema = createInsertSchema(events).pick({

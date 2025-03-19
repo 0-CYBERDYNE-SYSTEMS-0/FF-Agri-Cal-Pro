@@ -32,7 +32,7 @@ export default function Weather() {
   }, [requestLocationPermission]);
   
   // Determine the actual location to use for weather fetching
-  const locationToUse = selectedLocation === "default" ? userLocation || "New York" : selectedLocation;
+  const locationToUse = selectedLocation === "default" ? userLocation : selectedLocation;
   
   // Use our weather hook to manage weather data
   const { weatherData, isLoading: isLoadingWeather, error } = useWeather(locationToUse);

@@ -1,17 +1,44 @@
 import { WeatherForecast } from "@shared/schema";
 import { apiRequest } from "./queryClient";
 
+// Add client-side caching
+interface CacheEntry {
+  data: WeatherForecast[];
+  timestamp: number;
+}
+
+const weatherCache: Record<string, CacheEntry> = {};
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes cache
+
 // This uses the real OpenWeather API through our backend
 export async function getWeatherForecast(location?: string): Promise<WeatherForecast[]> {
   try {
-    // Try to get location from localStorage if not provided
-    if (!location) {
+    // Get effective location
+    let effectiveLocation = location || "";
+    if (!effectiveLocation) {
       const savedLocation = localStorage.getItem("userLocation");
-      location = savedLocation || "default";
+      effectiveLocation = savedLocation || "New York";
     }
     
-    const response = await apiRequest("GET", `/api/weather?location=${encodeURIComponent(location)}`);
+    // Check cache first
+    const cacheKey = effectiveLocation;
+    const now = Date.now();
+    if (weatherCache[cacheKey] && (now - weatherCache[cacheKey].timestamp < CACHE_EXPIRY)) {
+      console.log(`Using cached weather data for ${effectiveLocation}`);
+      return weatherCache[cacheKey].data;
+    }
+    
+    // Cache miss or expired cache, fetch from API
+    console.log(`Fetching fresh weather data for ${effectiveLocation}`);
+    const response = await apiRequest("GET", `/api/weather?location=${encodeURIComponent(effectiveLocation)}`);
     const data = await response.json();
+    
+    // Cache the response
+    weatherCache[cacheKey] = {
+      data,
+      timestamp: now
+    };
+    
     return data;
   } catch (error) {
     console.error("Error fetching weather data:", error);
@@ -102,7 +129,7 @@ export function getLocationName(location: string): string {
   }
   
   // Otherwise, return the passed location or a default
-  return location === "default" ? "New York, USA" : (location || "Your Location");
+  return location === "default" ? savedLocation || "Your Location" : (location || "Your Location");
 }
 
 // Weather utility functions
@@ -125,20 +152,28 @@ export function getWeatherRecommendation(forecast: WeatherForecast): string {
 }
 
 export function shouldShowWeatherWarning(forecast: WeatherForecast): boolean {
-  return forecast.precipitation > 70 || forecast.temperature > 90 || forecast.temperature < 40;
+  // Only show warnings for truly concerning conditions
+  return forecast.precipitation > 85 || // Heavy rain (increased from 70%)
+         forecast.temperature > 95 ||   // Extreme heat (increased from 90°F)
+         forecast.temperature < 32 ||   // Freezing point (reduced from 40°F)
+         forecast.wind > 20;            // High winds
 }
 
 export function getWeatherWarning(forecast: WeatherForecast): string {
-  if (forecast.precipitation > 70) {
+  if (forecast.precipitation > 85) {
     return "Heavy rain expected! Consider postponing planting activities.";
   }
   
-  if (forecast.temperature > 90) {
+  if (forecast.temperature > 95) {
     return "Extreme heat! Provide extra water and shade for plants.";
   }
   
-  if (forecast.temperature < 40) {
-    return "Frost risk! Cover sensitive plants.";
+  if (forecast.temperature < 32) {
+    return "Freezing temperatures! Protect plants from frost damage.";
+  }
+  
+  if (forecast.wind > 20) {
+    return "High winds! Secure young plants and protect structures.";
   }
   
   return "";

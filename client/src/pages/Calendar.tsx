@@ -64,16 +64,11 @@ export default function Calendar() {
     setLocation(`/projects?id=${projectId}`);
   };
 
-  // Get active projects only (limit to 3 for display)
-  const activeProjects = projects
-    .filter(project => project.status === "active" || project.status === "ongoing")
-    .slice(0, 3);
-
   // Render the projects sidebar content
   const renderProjects = () => (
     <div className="h-full">
-      <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Active Projects</h2>
-      <div className="space-y-4">
+      <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Projects</h2>
+      <div className="space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto pr-2 pb-4">
         {isLoadingProjects ? (
           Array.from({ length: 3 }).map((_, index) => (
             <div key={index} className="bg-white rounded-lg shadow p-4 h-40 animate-pulse">
@@ -84,8 +79,8 @@ export default function Calendar() {
               <div className="h-2 bg-neutral-200 rounded w-full mt-6"></div>
             </div>
           ))
-        ) : activeProjects.length > 0 ? (
-          activeProjects.map((project) => (
+        ) : projects.length > 0 ? (
+          projects.map((project) => (
             <ProjectCard 
               key={project.id} 
               project={project} 
@@ -94,7 +89,7 @@ export default function Calendar() {
           ))
         ) : (
           <div className="text-center py-8 bg-white rounded-lg shadow">
-            <p className="text-neutral-500">No active projects found. Create a new project to get started.</p>
+            <p className="text-neutral-500">No projects found. Create a new project to get started.</p>
           </div>
         )}
       </div>
@@ -110,7 +105,7 @@ export default function Calendar() {
           <Button onClick={handleGetLocation} size="sm">Get Location</Button>
         </div>
       )}
-      <div className="flex flex-col">
+      <div className="max-h-[calc(100vh-10rem)] overflow-y-auto pr-2 pb-2">
         <WeatherRow 
           forecasts={weatherData} 
           isLoading={isLoadingWeather}
@@ -143,8 +138,8 @@ export default function Calendar() {
       {/* Mobile View - Projects and Weather displayed below calendar */}
       <div className="lg:hidden grid grid-cols-1 gap-8 mt-8">
         <div>
-          <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Active Projects</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Projects</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[70vh] overflow-y-auto">
             {isLoadingProjects ? (
               Array.from({ length: 3 }).map((_, index) => (
                 <div key={index} className="bg-white rounded-lg shadow p-4 h-40 animate-pulse">
@@ -155,8 +150,8 @@ export default function Calendar() {
                   <div className="h-2 bg-neutral-200 rounded w-full mt-6"></div>
                 </div>
               ))
-            ) : activeProjects.length > 0 ? (
-              activeProjects.map((project) => (
+            ) : projects.length > 0 ? (
+              projects.map((project) => (
                 <ProjectCard 
                   key={project.id} 
                   project={project} 
@@ -165,7 +160,7 @@ export default function Calendar() {
               ))
             ) : (
               <div className="col-span-3 text-center py-8 bg-white rounded-lg shadow">
-                <p className="text-neutral-500">No active projects found. Create a new project to get started.</p>
+                <p className="text-neutral-500">No projects found. Create a new project to get started.</p>
               </div>
             )}
           </div>
@@ -178,11 +173,13 @@ export default function Calendar() {
               <Button onClick={handleGetLocation}>Get Location</Button>
             </div>
           )}
-          <WeatherRow 
-            forecasts={weatherData} 
-            isLoading={isLoadingWeather}
-            location={location}
-          />
+          <div className="max-h-[70vh] overflow-y-auto pr-2 pb-2">
+            <WeatherRow 
+              forecasts={weatherData} 
+              isLoading={isLoadingWeather}
+              location={location}
+            />
+          </div>
         </div>
       </div>
     </div>

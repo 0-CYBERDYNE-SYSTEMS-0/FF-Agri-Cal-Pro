@@ -43,13 +43,14 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
   // Make a copy of the first forecast with isCurrent flag for the current conditions card
   const currentForecast = { ...forecasts[0], isCurrent: true };
   
-  // In vertical mode, limit to 4 days instead of 7 (since we now have the current day card)
+  // In vertical mode, show 5 days of forecast
   const displayedForecasts = vertical 
-    ? forecasts.slice(1, 5) // Skip first day (shown as current) and show next 4
+    ? forecasts.slice(1, 6) // Skip first day (shown as current) and show next 5
     : forecasts.slice(1);   // Skip first day (shown as current) and show all others
   
   return (
     <div className="space-y-6">
+      {/* Current Conditions */}
       <div>
         <h3 className="text-center text-lg font-semibold mb-2">{`Weather in ${displayLocation}`}</h3>
         
@@ -63,16 +64,16 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
         </div>
         
         {/* Daily Forecast Section */}
-        <h4 className="text-md font-semibold mb-2">7-Day Forecast</h4>
+        <h4 className="text-md font-semibold mb-2">Forecast</h4>
         <div className={vertical 
-          ? "flex flex-col gap-3" 
+          ? "flex flex-col gap-4" 
           : "grid grid-cols-1 md:grid-cols-6 gap-4"
         }>
           {displayedForecasts.map((forecast, index) => (
             <ForecastCard 
               key={`${forecast.date}-${index}`} 
               forecast={forecast}
-              isToday={false}
+              isToday={index === 0}
               compact={vertical}
             />
           ))}
