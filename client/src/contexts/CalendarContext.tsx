@@ -43,10 +43,19 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   // Enhanced setView function with callback to ensure state updates
   const setViewAndUpdate = useCallback((newView: CalendarViewType) => {
     console.log(`Changing view from ${view} to ${newView}`);
-    setView(newView);
-    // Increment the force render counter to trigger re-renders
-    setForceRender(prev => prev + 1);
-  }, [view]);
+    
+    // Only update if actually changing views
+    if (newView !== view) {
+      // First update the forceRender counter to ensure the view change is detected
+      setForceRender(prev => prev + 1);
+      
+      // Then update the view with a short delay to ensure state consistency
+      setTimeout(() => {
+        setView(newView);
+        console.log(`View updated to ${newView}, forceRender: ${forceRender + 1}`);
+      }, 10);
+    }
+  }, [view, forceRender]);
 
   // Log whenever view changes
   useEffect(() => {

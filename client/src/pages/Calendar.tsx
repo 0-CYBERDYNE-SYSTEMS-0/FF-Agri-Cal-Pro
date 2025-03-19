@@ -30,10 +30,6 @@ export default function Calendar() {
     setLastRenderedView(view);
   }, [view, forceRender]);
 
-  // useEffect(() => {
-  //   requestLocationPermission();
-  // }, []);
-
   const handleGetLocation = () => {
     requestLocationPermission();
     setLocationRequested(true);
@@ -73,60 +69,122 @@ export default function Calendar() {
     .filter(project => project.status === "active" || project.status === "ongoing")
     .slice(0, 3);
 
-  return (
-    <>
-      <CalendarHeader />
-      
-      {calendarView}
+  // Render the projects sidebar content
+  const renderProjects = () => (
+    <div className="h-full">
+      <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Active Projects</h2>
+      <div className="space-y-4">
+        {isLoadingProjects ? (
+          Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="bg-white rounded-lg shadow p-4 h-40 animate-pulse">
+              <div className="h-4 bg-neutral-200 rounded w-3/4 mb-2"></div>
+              <div className="h-3 bg-neutral-200 rounded w-1/4 mb-4"></div>
+              <div className="h-3 bg-neutral-200 rounded w-full mb-2"></div>
+              <div className="h-3 bg-neutral-200 rounded w-5/6 mb-4"></div>
+              <div className="h-2 bg-neutral-200 rounded w-full mt-6"></div>
+            </div>
+          ))
+        ) : activeProjects.length > 0 ? (
+          activeProjects.map((project) => (
+            <ProjectCard 
+              key={project.id} 
+              project={project} 
+              onSelect={() => handleProjectSelect(project.id)}
+            />
+          ))
+        ) : (
+          <div className="text-center py-8 bg-white rounded-lg shadow">
+            <p className="text-neutral-500">No active projects found. Create a new project to get started.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
+  // Render the weather sidebar content
+  const renderWeather = () => (
+    <div className="h-full">
+      <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
       {!locationRequested && (
-        <div className="mt-4 flex justify-center">
-          <Button onClick={handleGetLocation}>Get Location</Button>
+        <div className="mb-4 flex justify-center">
+          <Button onClick={handleGetLocation} size="sm">Get Location</Button>
         </div>
       )}
-      
-      {/* Weather Forecast Section */}
-      <div className="mt-8">
-        <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
+      <div className="flex flex-col">
         <WeatherRow 
           forecasts={weatherData} 
           isLoading={isLoadingWeather}
           location={location}
+          vertical={true} // New prop for vertical layout
         />
       </div>
-      
-      {/* Current Projects Quick Access */}
-      <div className="mt-8">
-        <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Active Projects</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {isLoadingProjects ? (
-            Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="bg-white rounded-lg shadow p-4 h-40 animate-pulse">
-                <div className="h-4 bg-neutral-200 rounded w-3/4 mb-2"></div>
-                <div className="h-3 bg-neutral-200 rounded w-1/4 mb-4"></div>
-                <div className="h-3 bg-neutral-200 rounded w-full mb-2"></div>
-                <div className="h-3 bg-neutral-200 rounded w-5/6 mb-4"></div>
-                <div className="h-2 bg-neutral-200 rounded w-full mt-6"></div>
-              </div>
-            ))
-          ) : activeProjects.length > 0 ? (
-            activeProjects.map((project) => (
-              <ProjectCard 
-                key={project.id} 
-                project={project} 
-                onSelect={() => handleProjectSelect(project.id)}
-              />
-            ))
-          ) : (
-            <div className="col-span-3 text-center py-8 bg-white rounded-lg shadow">
-              <p className="text-neutral-500">No active projects found. Create a new project to get started.</p>
-            </div>
-          )}
-        </div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-6">
+      {/* Left Sidebar - Projects */}
+      <div className="hidden lg:block lg:w-1/5 lg:min-w-[250px] sticky top-6 self-start">
+        {renderProjects()}
       </div>
       
-      {/* Add the ViewDebugger for visual feedback */}
-      <ViewDebugger />
-    </>
+      {/* Main Calendar Content */}
+      <div className="flex-1">
+        <CalendarHeader />
+        {calendarView}
+        <ViewDebugger />
+      </div>
+      
+      {/* Right Sidebar - Weather */}
+      <div className="hidden lg:block lg:w-1/5 lg:min-w-[250px] sticky top-6 self-start">
+        {renderWeather()}
+      </div>
+      
+      {/* Mobile View - Projects and Weather displayed below calendar */}
+      <div className="lg:hidden grid grid-cols-1 gap-8 mt-8">
+        <div>
+          <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Active Projects</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {isLoadingProjects ? (
+              Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="bg-white rounded-lg shadow p-4 h-40 animate-pulse">
+                  <div className="h-4 bg-neutral-200 rounded w-3/4 mb-2"></div>
+                  <div className="h-3 bg-neutral-200 rounded w-1/4 mb-4"></div>
+                  <div className="h-3 bg-neutral-200 rounded w-full mb-2"></div>
+                  <div className="h-3 bg-neutral-200 rounded w-5/6 mb-4"></div>
+                  <div className="h-2 bg-neutral-200 rounded w-full mt-6"></div>
+                </div>
+              ))
+            ) : activeProjects.length > 0 ? (
+              activeProjects.map((project) => (
+                <ProjectCard 
+                  key={project.id} 
+                  project={project} 
+                  onSelect={() => handleProjectSelect(project.id)}
+                />
+              ))
+            ) : (
+              <div className="col-span-3 text-center py-8 bg-white rounded-lg shadow">
+                <p className="text-neutral-500">No active projects found. Create a new project to get started.</p>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        <div>
+          <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
+          {!locationRequested && (
+            <div className="mb-4 flex justify-center">
+              <Button onClick={handleGetLocation}>Get Location</Button>
+            </div>
+          )}
+          <WeatherRow 
+            forecasts={weatherData} 
+            isLoading={isLoadingWeather}
+            location={location}
+          />
+        </div>
+      </div>
+    </div>
   );
 }

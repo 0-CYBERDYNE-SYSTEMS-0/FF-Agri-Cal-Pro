@@ -41,7 +41,7 @@ function App() {
       <div className="flex flex-col h-screen">
         <Header />
         <main className="flex-1 overflow-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="w-full mx-auto px-2 sm:px-4 md:px-6 py-4 max-w-[1600px]">
             <Router />
           </div>
         </main>

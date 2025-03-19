@@ -6,7 +6,7 @@ import {
   isToday,
   getEventsForDay,
 } from "@/lib/calendarUtils";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +17,7 @@ interface CalendarDayProps {
   events: Event[];
   weatherData: WeatherForecast[] | undefined;
   onClick: () => void;
+  onEventClick: (eventId: number) => void;
 }
 
 function CalendarDay({
@@ -25,6 +26,7 @@ function CalendarDay({
   events,
   weatherData,
   onClick,
+  onEventClick,
 }: CalendarDayProps) {
   const isCurrentMonth = isSameMonth(
     day,
@@ -69,13 +71,17 @@ function CalendarDay({
       {dayEvents.map((event) => (
         <div
           key={event.id}
-          className={`mt-1 px-1 py-0.5 text-xs rounded ${
+          className={`mt-1 px-1 py-0.5 text-xs rounded cursor-pointer hover:opacity-80 ${
             event.projectId === 1
               ? "bg-primary text-white"
               : event.projectId === 2
               ? "bg-secondary text-white"
               : "bg-accent rounded text-primary-dark"
           }`}
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent day click
+            onEventClick(event.id);
+          }}
         >
           {event.title}
         </div>
@@ -91,6 +97,7 @@ interface MonthViewProps {
 export default function MonthView({ weatherData }: MonthViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState<number | undefined>(undefined);
   const { currentDate } = useCalendar();
 
   const { data: events = [], isLoading } = useQuery<Event[]>({
@@ -103,8 +110,34 @@ export default function MonthView({ weatherData }: MonthViewProps) {
 
   const handleDayClick = (day: Date) => {
     setSelectedDate(day);
+    setSelectedEventId(undefined); // Clear event ID when just selecting a day
     setIsModalOpen(true);
   };
+
+  const handleEventClick = (eventId: number) => {
+    const clickedEvent = events.find(event => event.id === eventId);
+    if (clickedEvent) {
+      setSelectedDate(new Date(clickedEvent.startDate));
+      setSelectedEventId(eventId);
+      setIsModalOpen(true);
+    }
+  };
+
+  // Listen for custom events to open the modal from elsewhere
+  useEffect(() => {
+    const handleOpenModal = () => {
+      console.log("Received open-event-modal event");
+      setSelectedDate(new Date());
+      setSelectedEventId(undefined);
+      setIsModalOpen(true);
+    };
+
+    window.addEventListener('open-event-modal', handleOpenModal);
+    
+    return () => {
+      window.removeEventListener('open-event-modal', handleOpenModal);
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -132,27 +165,11 @@ export default function MonthView({ weatherData }: MonthViewProps) {
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {/* Calendar Days Header */}
         <div className="grid grid-cols-7 gap-px bg-neutral-200">
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Sun
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Mon
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Tue
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Wed
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Thu
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Fri
-          </div>
-          <div className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
-            Sat
-          </div>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, i) => (
+            <div key={i} className="bg-white p-2 text-center text-sm font-medium text-neutral-600">
+              {day}
+            </div>
+          ))}
         </div>
 
         {/* Calendar Grid */}
@@ -165,6 +182,7 @@ export default function MonthView({ weatherData }: MonthViewProps) {
               events={events}
               weatherData={weatherData}
               onClick={() => handleDayClick(day)}
+              onEventClick={handleEventClick}
             />
           ))}
         </div>
@@ -172,8 +190,12 @@ export default function MonthView({ weatherData }: MonthViewProps) {
 
       <EventModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedEventId(undefined);
+        }}
         selectedDate={selectedDate}
+        editEventId={selectedEventId}
       />
     </>
   );

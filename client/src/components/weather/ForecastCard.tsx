@@ -6,12 +6,51 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface ForecastCardProps {
   forecast: WeatherForecast;
   isToday?: boolean;
+  compact?: boolean;
 }
 
-export default function ForecastCard({ forecast, isToday = false }: ForecastCardProps) {
+export default function ForecastCard({ forecast, isToday = false, compact = false }: ForecastCardProps) {
   const { dayOfWeek, temperature, weatherDescription, icon, wind, humidity, precipitation } = forecast;
   const showWarning = shouldShowWeatherWarning(forecast);
   
+  // Different layout for compact (vertical sidebar) mode
+  if (compact) {
+    return (
+      <Card className="shadow">
+        <CardContent className="p-3">
+          <div className="flex items-center">
+            <div className="mr-3 text-2xl">{getWeatherIcon(icon)}</div>
+            <div className="flex-1">
+              <div className="flex justify-between items-center">
+                <p className="font-medium text-neutral-700">{isToday ? "Today" : dayOfWeek}</p>
+                <p className="text-base font-medium">{temperature}°F</p>
+              </div>
+              <p className="text-xs text-neutral-500">{getWeatherDescription(weatherDescription)}</p>
+              
+              <div className="mt-1 text-xs text-neutral-500 flex justify-between">
+                <span>Wind: {wind}mph</span>
+                <span>Hum: {humidity}%</span>
+              </div>
+            </div>
+          </div>
+          
+          {showWarning && (
+            <div className="mt-1 p-1 text-xs bg-red-100 text-red-800 rounded text-center">
+              Weather Alert: {getWeatherWarning(forecast)}
+            </div>
+          )}
+          
+          {isToday && (
+            <div className="mt-1 p-1 text-xs bg-primary/10 text-primary-dark rounded text-center">
+              {getWeatherRecommendation(forecast)}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+  
+  // Regular card layout (original)
   return (
     <Card className="shadow">
       <CardContent className="p-4 text-center">

@@ -517,29 +517,84 @@ function weatherIconToEmoji(iconCode: string): string {
         apiKey: process.env.OPENAI_API_KEY
       });
       
-      // Get location data for context from request headers or default
+      // Get location data for context from request headers or use default
       const userAgent = req.headers['user-agent'] || '';
       let userLocation = 'Unknown Location';
       
-      // Try to get location from query or use default
+      // Try to get location from query or cookies, or use default
       if (req.query.location) {
         userLocation = req.query.location as string;
+      } else if (req.cookies && req.cookies.userLocation) {
+        userLocation = req.cookies.userLocation;
       } else {
         // Default location if not provided
         userLocation = 'New York, USA';
       }
       
-      // Current date and time information
+      // Get real weather data and context directly instead of going through the API
+      // This avoids port issues and is more efficient
+      
+      // Get weather data
+      const weatherData = await getWeatherInfo(userLocation);
+      
+      // Get user's calendar events (using default user ID 1)
+      const userId = 1;
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Determine current season
       const now = new Date();
-      const dateTimeString = now.toLocaleString();
-      const season = getSeasonForDate(now);
+      const currentSeason = getSeasonForDate(now);
+      
+      // Build context data directly - similar structure to the /api/assistant/context endpoint
+      const contextData = {
+        timestamp: now.toISOString(),
+        location: userLocation,
+        season: currentSeason,
+        weather: weatherData ? {
+          current: {
+            temperature: Math.round((weatherData.current.temp * 9/5) + 32),
+            conditions: weatherData.current.weather_description,
+            humidity: weatherData.current.humidity,
+            wind: Math.round(weatherData.current.wind_speed * 2.237)
+          },
+          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+            date: day.date,
+            temperature: Math.round((day.temp * 9/5) + 32),
+            conditions: day.weather_description
+          }))
+        } : null,
+        events: userEvents.map(event => ({
+          id: event.id,
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate,
+          isWeatherDependent: event.checkWeather
+        }))
+      };
       
       // Prepare messages for API
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
       
-Current date: ${dateTimeString}
-Current season: ${season}
-User location: ${userLocation}
+Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
+Current season: ${contextData.season}
+User location: ${contextData.location}
+${contextData.weather ? `
+Current weather: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
+Humidity: ${contextData.weather.current.humidity}%
+Wind: ${contextData.weather.current.wind} mph
+
+Weather forecast for the next ${contextData.weather.forecast.length} days:
+${contextData.weather.forecast.map((day, index) => 
+  `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
+).join('\n')}
+` : ''}
+${contextData.events && contextData.events.length > 0 ? `
+Upcoming calendar events:
+${contextData.events.slice(0, 5).map(event => {
+  const startDate = new Date(event.startDate);
+  return `- ${event.title} on ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}${event.isWeatherDependent ? ' (Weather dependent)' : ''}`;
+}).join('\n')}
+` : ''}
 
 CRITICAL: When the user asks you to schedule an event, you MUST ALWAYS use the create_calendar_event function. NEVER respond as if you've scheduled something without explicitly calling this function.
 

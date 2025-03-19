@@ -1,8 +1,17 @@
 import { apiRequest } from "./queryClient";
 
 interface Message {
-  role: "user" | "assistant" | "system";
-  content: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: {
+      name: string;
+      arguments: string;
+    }
+  }>;
+  tool_call_id?: string;
 }
 
 // Send a message to the conversation and get the AI response
@@ -114,7 +123,26 @@ export async function getAiSuggestion(prompt: string): Promise<string> {
     const assistantMessage = messages.find(msg => msg.role === "assistant");
     
     if (assistantMessage) {
-      return assistantMessage.content;
+      // Check for tool_calls in the message (function calls)
+      if (assistantMessage.tool_calls) {
+        // If there are tool_calls, the message might be a function call response
+        // We need to look for the actual text response after function call resolution
+        
+        // Find the last assistant message with content after tool responses
+        const lastContentfulMessage = messages
+          .filter(msg => msg.role === "assistant" && msg.content)
+          .pop();
+        
+        if (lastContentfulMessage && lastContentfulMessage.content) {
+          return lastContentfulMessage.content;
+        }
+        
+        // If no text response found, return a default response
+        return "I've processed your request, but didn't generate a text response. Please try a different prompt.";
+      }
+      
+      // Normal text response
+      return assistantMessage.content || "No response content available";
     } else {
       throw new Error("No assistant response found");
     }
