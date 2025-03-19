@@ -310,10 +310,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         {
           date: new Date().toISOString().split('T')[0],
           dayOfWeek: "Today",
-          temperature: Math.round((weatherData.current.temp * 9/5) + 32), // Convert from C to F
+          temperature: weatherData.current.temp, // Already in Fahrenheit
           weatherDescription: weatherData.current.weather_description,
           icon: weatherIconToEmoji(weatherData.current.icon),
-          wind: Math.round(weatherData.current.wind_speed * 2.237), // Convert m/s to mph
+          wind: weatherData.current.wind_speed, // Already in mph
           humidity: weatherData.current.humidity,
           precipitation: 0 // Not directly available in the API, would need additional calls
         },
@@ -325,12 +325,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             date: day.date,
             dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(day.date).getDay()],
-            temperature: Math.round((day.temp * 9/5) + 32), // Convert from C to F
+            temperature: day.temp, // Already in Fahrenheit
             weatherDescription: day.weather_description,
             icon: weatherIconToEmoji(day.icon),
-            wind: 0, // Not directly available in this forecast format
-            humidity: 0, // Not directly available in this forecast format
-            precipitation: 0 // Not directly available in this forecast format
+            wind: day.wind || 0, // Use provided wind value if available
+            humidity: day.humidity || 0, // Use provided humidity value if available
+            precipitation: day.precipitation || 0 // Use provided precipitation if available
           };
         })
       ];
@@ -552,14 +552,14 @@ function weatherIconToEmoji(iconCode: string): string {
         season: currentSeason,
         weather: weatherData ? {
           current: {
-            temperature: Math.round((weatherData.current.temp * 9/5) + 32),
+            temperature: weatherData.current.temp, // Already in Fahrenheit
             conditions: weatherData.current.weather_description,
             humidity: weatherData.current.humidity,
-            wind: Math.round(weatherData.current.wind_speed * 2.237)
+            wind: Math.round(weatherData.current.wind_speed) // Already in mph
           },
           forecast: weatherData.forecast.slice(0, 6).map((day) => ({
             date: day.date,
-            temperature: Math.round((day.temp * 9/5) + 32),
+            temperature: day.temp, // Already in Fahrenheit
             conditions: day.weather_description
           }))
         } : null,
@@ -1023,14 +1023,14 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         season: currentSeason,
         weather: {
           current: {
-            temperature: Math.round((weatherData.current.temp * 9/5) + 32),
+            temperature: weatherData.current.temp, // Already in Fahrenheit
             conditions: weatherData.current.weather_description,
             humidity: weatherData.current.humidity,
-            wind: Math.round(weatherData.current.wind_speed * 2.237)
+            wind: Math.round(weatherData.current.wind_speed) // Already in mph
           },
           forecast: weatherData.forecast.slice(0, 6).map((day) => ({
             date: day.date,
-            temperature: Math.round((day.temp * 9/5) + 32),
+            temperature: day.temp, // Already in Fahrenheit
             conditions: day.weather_description
           }))
         },

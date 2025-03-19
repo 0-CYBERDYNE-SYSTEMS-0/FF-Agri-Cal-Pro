@@ -116,9 +116,16 @@ export type WeatherForecast = {
   date: string;
   dayOfWeek: string;
   temperature: number;
+  temp_min: number; // Low temperature
+  temp_max: number; // High temperature
+  feels_like: number; // Feels like temperature
   weatherDescription: string;
   icon: string;
   wind: number;
   humidity: number;
   precipitation: number;
+  pressure?: number; // Air pressure
+  visibility?: number; // Visibility in meters
+  uv_index?: number; // UV index
+  isCurrent?: boolean; // Flag to identify current day/time forecast
 };

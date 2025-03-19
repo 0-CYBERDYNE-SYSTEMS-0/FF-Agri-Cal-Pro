@@ -2,6 +2,7 @@
  * Utility functions for interacting with the OpenWeather API
  */
 import axios from 'axios';
+import { WeatherForecast } from '@shared/schema';
 
 export interface GeocodingResult {
   name: string;
@@ -128,16 +129,30 @@ interface WeatherResponse {
   current: {
     temp: number;
     feels_like: number;
+    temp_min: number;
+    temp_max: number;
     humidity: number;
     wind_speed: number;
     weather_description: string;
     icon: string;
+    pressure: number;
+    visibility: number;
   };
   forecast: Array<{
     date: string;
+    dayOfWeek: string;
     temp: number;
+    temp_min: number;
+    temp_max: number;
+    feels_like: number;
     weather_description: string;
     icon: string;
+    wind: number;
+    humidity: number;
+    precipitation: number;
+    pressure?: number;
+    visibility?: number;
+    uv_index?: number;
   }>;
   alerts?: Array<{
     event: string;
@@ -318,70 +333,73 @@ export async function getForecast(lat: number, lon: number): Promise<ForecastDat
   }
 }
 
+// Convert from Celsius to Fahrenheit
+function celsiusToFahrenheit(celsius: number): number {
+  return Math.round(celsius * 9/5 + 32);
+}
+
 /**
  * Get comprehensive weather information for a location
  */
 export async function getWeatherInfo(location: string): Promise<WeatherResponse | null> {
   try {
-    // Step 1: Geocode the location
+    // First geocode the location to get coordinates
     const geoData = await geocodeLocation(location);
     if (!geoData) {
+      console.error("Could not find coordinates for location:", location);
       return null;
     }
     
-    // Step 2: Get current weather
+    // Get current weather
     const currentWeather = await getCurrentWeather(geoData.lat, geoData.lon);
     if (!currentWeather) {
+      console.error("Could not retrieve current weather for location:", location);
       return null;
     }
     
-    // Step 3: Get forecast
+    // Get forecast
     const forecastData = await getForecast(geoData.lat, geoData.lon);
     if (!forecastData) {
+      console.error("Could not retrieve forecast for location:", location);
       return null;
     }
     
-    // Step 4: Format response
-    const response: WeatherResponse = {
-      location: `${geoData.name}, ${geoData.country}${geoData.state ? `, ${geoData.state}` : ''}`,
+    // Process forecast data into daily forecasts
+    const processedForecasts = processDailyForecast(forecastData);
+    
+    // Convert temperature values from Celsius to Fahrenheit
+    const formattedForecasts = processedForecasts.map(forecast => ({
+      ...forecast,
+      temp: celsiusToFahrenheit(forecast.temp),
+      temp_min: celsiusToFahrenheit(forecast.temp_min),
+      temp_max: celsiusToFahrenheit(forecast.temp_max),
+      feels_like: celsiusToFahrenheit(forecast.feels_like),
+      pressure: forecast.pressure || currentWeather.main.pressure,
+      visibility: forecast.visibility || currentWeather.visibility,
+      uv_index: 0 // Not available in standard API
+    }));
+    
+    // Format response
+    return {
+      location: geoData.name + (geoData.state ? `, ${geoData.state}` : "") + (geoData.country ? `, ${geoData.country}` : ""),
       current: {
-        temp: currentWeather.main.temp,
-        feels_like: currentWeather.main.feels_like,
+        temp: celsiusToFahrenheit(currentWeather.main.temp),
+        feels_like: celsiusToFahrenheit(currentWeather.main.feels_like),
+        temp_min: celsiusToFahrenheit(currentWeather.main.temp_min),
+        temp_max: celsiusToFahrenheit(currentWeather.main.temp_max),
         humidity: currentWeather.main.humidity,
-        wind_speed: currentWeather.wind.speed,
+        wind_speed: Math.round(currentWeather.wind.speed),
         weather_description: currentWeather.weather[0].description,
-        icon: currentWeather.weather[0].icon
+        icon: currentWeather.weather[0].icon,
+        pressure: currentWeather.main.pressure,
+        visibility: currentWeather.visibility,
       },
-      forecast: []
+      forecast: formattedForecasts,
+      alerts: []
     };
     
-    // Process 5-day forecast (at 3-hour intervals)
-    // Get one forecast per day (noon time or closest to it)
-    const dailyForecasts = new Map<string, any>();
-    
-    forecastData.list.forEach(item => {
-      const date = item.dt_txt.split(' ')[0];
-      const hour = parseInt(item.dt_txt.split(' ')[1].split(':')[0]);
-      
-      // Select forecast closest to noon for each day
-      if (!dailyForecasts.has(date) || Math.abs(hour - 12) < Math.abs(parseInt(dailyForecasts.get(date).dt_txt.split(' ')[1].split(':')[0]) - 12)) {
-        dailyForecasts.set(date, item);
-      }
-    });
-    
-    // Add each day's forecast to the response
-    dailyForecasts.forEach((forecast, date) => {
-      response.forecast.push({
-        date,
-        temp: forecast.main.temp,
-        weather_description: forecast.weather[0].description,
-        icon: forecast.weather[0].icon
-      });
-    });
-    
-    return response;
   } catch (error) {
-    console.error('Error getting weather information:', error);
+    console.error("Error getting weather info:", error);
     return null;
   }
 }
@@ -463,5 +481,155 @@ export function getAgricultureRecommendations(weatherData: WeatherResponse): str
   } catch (error) {
     console.error('Error generating agriculture recommendations:', error);
     return 'Unable to generate agriculture-specific weather recommendations at this time.';
+  }
+}
+
+// Helper function to process a daily forecast
+function processDailyForecast(forecastData: ForecastData): Array<{
+  date: string;
+  dayOfWeek: string;
+  temp: number;
+  temp_min: number;
+  temp_max: number;
+  feels_like: number;
+  weather_description: string;
+  icon: string;
+  wind: number;
+  humidity: number;
+  precipitation: number;
+  pressure?: number;
+  visibility?: number;
+}> {
+  const processedForecasts: Array<{
+    date: string;
+    dayOfWeek: string;
+    temp: number;
+    temp_min: number;
+    temp_max: number;
+    feels_like: number;
+    weather_description: string;
+    icon: string;
+    wind: number;
+    humidity: number;
+    precipitation: number;
+    pressure?: number;
+    visibility?: number;
+  }> = [];
+  const processedDays = new Set<string>();
+  
+  // Group forecast items by day
+  const dailyForecasts = new Map<string, any[]>();
+  
+  forecastData.list.forEach(item => {
+    const date = item.dt_txt.split(' ')[0]; // Get just the date part
+    if (!dailyForecasts.has(date)) {
+      dailyForecasts.set(date, []);
+    }
+    dailyForecasts.get(date)!.push(item);
+  });
+  
+  // Process each day's forecasts
+  dailyForecasts.forEach((items, date) => {
+    // Get the forecast for 12:00 or the closest time for representative daytime conditions
+    const midday = items.find(item => item.dt_txt.includes('12:00:00')) || items[0];
+    
+    // Calculate min and max temperature across all time periods for that day
+    let min_temp = Infinity;
+    let max_temp = -Infinity;
+    
+    items.forEach(item => {
+      if (item.main.temp_min < min_temp) min_temp = item.main.temp_min;
+      if (item.main.temp_max > max_temp) max_temp = item.main.temp_max;
+    });
+    
+    // Format dates
+    const dateObj = new Date(date);
+    const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(dateObj);
+    
+    // Calculate precipitation probability (average for the day)
+    const precipitation = items.reduce((acc, item) => acc + (item.pop || 0), 0) / items.length * 100;
+    
+    // Create the forecast object
+    processedForecasts.push({
+      date,
+      dayOfWeek,
+      temp: midday.main.temp,
+      temp_min: min_temp,
+      temp_max: max_temp,
+      feels_like: midday.main.feels_like,
+      weather_description: midday.weather[0].description,
+      icon: midday.weather[0].icon,
+      wind: Math.round(midday.wind.speed),
+      humidity: midday.main.humidity,
+      precipitation: Math.round(precipitation),
+      pressure: midday.main.pressure,
+      visibility: midday.visibility
+    });
+    
+    processedDays.add(date);
+  });
+  
+  // Sort forecasts by date
+  processedForecasts.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  
+  return processedForecasts;
+}
+
+// Convert internal forecast format to WeatherForecast schema type
+function mapToWeatherForecast(forecast: any): WeatherForecast {
+  return {
+    date: forecast.date,
+    dayOfWeek: forecast.dayOfWeek,
+    temperature: forecast.temp,
+    temp_min: forecast.temp_min,
+    temp_max: forecast.temp_max,
+    feels_like: forecast.feels_like,
+    weatherDescription: forecast.weather_description,
+    icon: forecast.icon,
+    wind: forecast.wind,
+    humidity: forecast.humidity,
+    precipitation: forecast.precipitation,
+    pressure: forecast.pressure,
+    visibility: forecast.visibility,
+    uv_index: forecast.uv_index
+  };
+}
+
+// Helper function to get the WeatherForecast objects for client API
+export async function getWeatherForecast(location: string): Promise<WeatherForecast[]> {
+  try {
+    const weatherInfo = await getWeatherInfo(location);
+    if (!weatherInfo) {
+      return [];
+    }
+    
+    // Map the server's internal forecast format to the schema format
+    const forecasts: WeatherForecast[] = [
+      // Add current weather as first item
+      {
+        date: new Date().toISOString().split('T')[0],
+        dayOfWeek: 'Today',
+        temperature: weatherInfo.current.temp,
+        temp_min: weatherInfo.current.temp_min,
+        temp_max: weatherInfo.current.temp_max,
+        feels_like: weatherInfo.current.feels_like,
+        weatherDescription: weatherInfo.current.weather_description,
+        icon: weatherInfo.current.icon,
+        wind: Math.round(weatherInfo.current.wind_speed),
+        humidity: weatherInfo.current.humidity,
+        precipitation: 0, // This isn't in current weather data
+        pressure: weatherInfo.current.pressure,
+        visibility: weatherInfo.current.visibility,
+        uv_index: 0,
+        isCurrent: true
+      },
+      // Add the rest of the forecast days
+      ...weatherInfo.forecast.map(forecast => mapToWeatherForecast(forecast))
+    ];
+    
+    return forecasts;
+  } catch (error) {
+    console.error("Error getting weather forecast:", error);
+    return [];
   }
 }
