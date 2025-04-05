@@ -28,7 +28,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     lat: number;
     lon: number;
   } | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   // Add refs to prevent multiple simultaneous lookups
@@ -151,6 +151,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       // Default location if nothing saved and no permission yet
       setLocation("New York");
     }
+    setIsLoading(false);
   }, []);
 
   const requestLocationPermission = useCallback(() => {

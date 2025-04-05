@@ -62,7 +62,7 @@ export default function ChatInterface() {
   const messages: Message[] = activeConversation?.messages as Message[] || [];
   
   // Get the user's current location
-  const { location: userLocation, requestLocationPermission } = useLocation();
+  const { location: userLocation, isLoading: isLoadingLocation, requestLocationPermission } = useLocation();
   
   // Request location permission when chat is opened
   useEffect(() => {
@@ -252,19 +252,21 @@ export default function ChatInterface() {
   const { data: contextData, isLoading: isLoadingContext } = useQuery({
     queryKey: ["/api/assistant/context", locationToUse],
     queryFn: async () => {
-      const location = locationToUse || "New York"; // Fallback to New York only at API call time
+      // Use the confirmed location, fallback just in case.
+      const location = userLocation || "New York"; 
       const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(location)}`);
       return response.json();
     },
-    enabled: isOpen && !!conversationId,
+    // Enable only when chat is open, we have an ID, location isn't loading, and location exists.
+    enabled: isOpen && !!conversationId && !isLoadingLocation && !!userLocation,
   });
   
-  // Re-fetch context data when location changes
+  // Re-fetch context data when location changes (and is no longer loading)
   useEffect(() => {
-    if (conversationId && userLocation) {
+    if (conversationId && userLocation && !isLoadingLocation) {
       queryClient.invalidateQueries({ queryKey: ["/api/assistant/context"] });
     }
-  }, [userLocation, conversationId, queryClient]);
+  }, [userLocation, conversationId, queryClient, isLoadingLocation]); // Added isLoadingLocation dependency
   
   // Enhance the assistant with calendar and weather context
   useEffect(() => {
@@ -413,7 +415,7 @@ Wind: ${contextData.weather.current.wind} mph
   return (
     <>
       {/* Fixed chat button at the bottom right */}
-      <div className="fixed bottom-6 right-6">
+      <div className="fixed bottom-6 right-6 z-50">
         <Button 
           id="chat-button"
           onClick={toggleChat}
@@ -494,7 +496,7 @@ Wind: ${contextData.weather.current.wind} mph
       {/* Chat popup */}
       <div 
         id="chat-popup" 
-        className={`${isOpen ? 'block' : 'hidden'} fixed bottom-24 right-6 w-80 md:w-96 bg-white rounded-lg shadow-2xl overflow-hidden z-10 max-h-[70vh] flex flex-col`}
+        className={`${isOpen ? 'block' : 'hidden'} fixed bottom-28 right-6 w-80 md:w-96 bg-white rounded-lg shadow-2xl overflow-hidden z-50 max-h-[70vh] flex flex-col border border-gray-200`}
       >
         <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-primary text-white">
           <h3 className="font-medium">Farm Friend</h3>
@@ -529,14 +531,14 @@ Wind: ${contextData.weather.current.wind} mph
                   <div className={`${
                     message.role === "user" 
                       ? "mr-2 bg-primary text-white" 
-                      : "ml-2 bg-neutral-100"
-                  } rounded-lg p-3 max-w-[75%]`}>
+                      : "ml-2 bg-white border border-gray-200"
+                  } rounded-lg p-3 max-w-[75%] shadow-sm`}>
                     {message.role === "user" ? (
                       <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                     ) : (
                       <MarkdownRenderer 
                         content={message.content} 
-                        className="text-sm text-foreground"
+                        className={`text-sm ${message.role === "assistant" ? "text-neutral-800" : "text-white"}`}
                       />
                     )}
                   </div>
@@ -554,7 +556,7 @@ Wind: ${contextData.weather.current.wind} mph
                   <div className="flex-shrink-0 bg-primary rounded-full h-8 w-8 flex items-center justify-center text-white text-sm">
                     AI
                   </div>
-                  <div className="ml-2 bg-neutral-100 rounded-lg p-3">
+                  <div className="ml-2 bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
                     <div className="flex space-x-1">
                       <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"></div>
                       <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce delay-75"></div>
@@ -587,7 +589,7 @@ Wind: ${contextData.weather.current.wind} mph
           <div className="flex space-x-2">
             <Input
               type="text"
-              placeholder="Type your message..."
+              placeholder="Type your message... (Markdown supported)"
               className="flex-1 py-2 px-4 border border-neutral-300 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               value={input}
               onChange={(e) => setInput(e.target.value)}

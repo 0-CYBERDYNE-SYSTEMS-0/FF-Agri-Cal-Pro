@@ -448,15 +448,15 @@ export class MemStorage implements IStorage {
       messages: [
         {
           role: "assistant",
-          content: "Hello! I'm Farm Friend your agricultural planning assistant. How can I help you today?"
+          content: "Hello! I'm Farm Friend, your agricultural planning assistant. The current season is a great time for various farming activities. How can I help with your agricultural planning today?"
         },
         {
           role: "user",
-          content: "I need help planning my tomato planting schedule."
+          content: "What are some important seasonal tasks I should be planning for?"
         },
         {
           role: "assistant",
-          content: "I'd be happy to help with your tomato planting schedule! Could you tell me your location so I can provide recommendations based on your climate zone?"
+          content: "Great question about seasonal planning! To provide you with the most relevant recommendations, could you tell me your location? This will help me suggest activities based on your local climate and growing conditions."
         }
       ]
     };
@@ -507,7 +507,8 @@ export class MemStorage implements IStorage {
       description: insertProject.description || null,
       startDate: insertProject.startDate || null,
       endDate: insertProject.endDate || null,
-      progress: insertProject.progress || null
+      progress: insertProject.progress || null,
+      color: insertProject.color || null
     };
     this.projects.set(id, project);
     return project;

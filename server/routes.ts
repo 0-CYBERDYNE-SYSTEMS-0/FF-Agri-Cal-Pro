@@ -484,7 +484,66 @@ function weatherIconToEmoji(iconCode: string): string {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      const conversationData = insertConversationSchema.parse({ ...req.body, userId });
+      
+      // If no messages are provided, add a weather-aware agricultural greeting
+      let messages = req.body.messages || [];
+      
+      // Define message interface
+      interface ConversationMessage {
+        role: string;
+        content: string;
+        tool_calls?: any[];
+        tool_call_id?: string;
+      }
+      
+      if (messages.length === 0 || (messages.length === 1 && messages[0].role === "system")) {
+        // Get default location
+        const userLocation = "New York, USA"; // Default location - in real app would be user's actual location
+        
+        // Get weather data
+        const weatherData = await getWeatherInfo(userLocation);
+        
+        // Determine current season
+        const now = new Date();
+        const currentSeason = getSeasonForDate(now);
+        
+        // Generate appropriate seasonal greeting
+        let seasonalActivities = "";
+        
+        switch(currentSeason) {
+          case "Spring":
+            seasonalActivities = "soil preparation, early crop planting, and equipment maintenance";
+            break;
+          case "Summer":
+            seasonalActivities = "irrigation management, pest control, and vegetable harvesting";
+            break;
+          case "Fall":
+            seasonalActivities = "harvest planning, soil testing, and winter preparation";
+            break;
+          case "Winter":
+            seasonalActivities = "crop planning, equipment repairs, and seed ordering";
+            break;
+        }
+        
+        // Create assistant greeting
+        const weatherInfo = weatherData ? 
+          `The current weather in ${userLocation} is ${weatherData.current.temp}°F with ${weatherData.current.weather_description}. ` : 
+          "";
+          
+        const greeting = `Hello! I'm your Farm Friend agricultural assistant. ${weatherInfo}We're currently in ${currentSeason}, which is typically the time for ${seasonalActivities} in your region.
+
+How can I help with your agricultural planning today?`;
+        
+        // Add assistant message if not already present
+        if (!messages.some((msg: ConversationMessage) => msg.role === "assistant")) {
+          messages.push({
+            role: "assistant",
+            content: greeting
+          });
+        }
+      }
+      
+      const conversationData = insertConversationSchema.parse({ messages, userId });
       const conversation = await storage.createConversation(conversationData);
       return res.status(201).json(conversation);
     } catch (err) {
@@ -596,6 +655,13 @@ ${contextData.events.slice(0, 5).map(event => {
 }).join('\n')}
 ` : ''}
 
+CALENDAR MANAGEMENT CAPABILITIES:
+- You can create events with create_calendar_event
+- You can update existing events with update_calendar_event
+- You can delete events with delete_calendar_event
+- You can search for events with search_calendar_events (by keyword, date range, or project)
+- You can organize events into projects with get_or_create_project
+
 CRITICAL: When the user asks you to schedule an event, you MUST ALWAYS use the create_calendar_event function. NEVER respond as if you've scheduled something without explicitly calling this function.
 
 Follow these strict requirements:
@@ -610,16 +676,6 @@ For calendar events:
 3. Set checkWeather to true for outdoor activities
 4. Include a detailed description with helpful tips
 5. Set a location when relevant
-
-Example function call for create_calendar_event:
-{
-  "title": "Turn Compost Piles",
-  "description": "Rotate compost piles to ensure proper aeration and decomposition",
-  "startDate": "2023-07-15T14:00:00Z",
-  "endDate": "2023-07-15T15:00:00Z",
-  "location": "North Field",
-  "checkWeather": true
-}
 
 Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
       
@@ -703,6 +759,97 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
                 }
               },
               required: ["title", "startDate", "endDate"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "update_calendar_event",
+            description: "Update an existing calendar event",
+            parameters: {
+              type: "object",
+              properties: {
+                eventId: {
+                  type: "number",
+                  description: "ID of the event to update"
+                },
+                title: {
+                  type: "string",
+                  description: "The updated title of the event"
+                },
+                description: {
+                  type: "string",
+                  description: "Updated detailed description of the event"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Updated start date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "Updated end date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                location: {
+                  type: "string",
+                  description: "Updated location where the event will take place"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Updated ID of the project this event belongs to"
+                },
+                checkWeather: {
+                  type: "boolean",
+                  description: "Whether this event is weather-dependent"
+                }
+              },
+              required: ["eventId"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "delete_calendar_event",
+            description: "Delete an existing calendar event",
+            parameters: {
+              type: "object",
+              properties: {
+                eventId: {
+                  type: "number",
+                  description: "ID of the event to delete"
+                }
+              },
+              required: ["eventId"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "search_calendar_events",
+            description: "Search for calendar events by keyword, date range, or both",
+            parameters: {
+              type: "object",
+              properties: {
+                keyword: {
+                  type: "string",
+                  description: "Keyword to search in event titles and descriptions"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Start date for filtering events (in ISO format YYYY-MM-DD)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date for filtering events (in ISO format YYYY-MM-DD)"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Filter events by project ID"
+                }
+              },
+              required: []
             }
           }
         },
@@ -853,6 +1000,68 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           toolResponse = JSON.stringify({
             success: true,
             event: newEvent
+          });
+        } else if (functionName === "update_calendar_event") {
+          const eventData = functionArgs;
+          console.log("Updating calendar event from assistant:", eventData);
+          
+          // Validate the event data
+          const validatedEvent = insertEventSchema.parse({
+            ...eventData,
+            userId: 1, // Default user ID
+          });
+          
+          // Update the event using the storage interface
+          const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            event: updatedEvent
+          });
+        } else if (functionName === "delete_calendar_event") {
+          console.log("Deleting calendar event from assistant:", functionArgs.eventId);
+          
+          // Delete the event using the storage interface
+          await storage.deleteEvent(functionArgs.eventId);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            message: "Event deleted successfully"
+          });
+        } else if (functionName === "search_calendar_events") {
+          console.log("Searching calendar events:", functionArgs);
+          
+          // Default to user 1 for demo
+          const userId = 1;
+          let events = [];
+          
+          // If we have a date range, use that for searching
+          if (functionArgs.startDate && functionArgs.endDate) {
+            const startDate = new Date(functionArgs.startDate);
+            const endDate = new Date(functionArgs.endDate);
+            events = await storage.getEventsByDateRange(userId, startDate, endDate);
+          } 
+          // If we have a project ID, filter by project
+          else if (functionArgs.projectId) {
+            events = await storage.getEventsByProject(functionArgs.projectId);
+          }
+          // Otherwise, get all events
+          else {
+            events = await storage.getEventsByUser(userId);
+          }
+          
+          // If we have a keyword, filter the results
+          if (functionArgs.keyword && events.length > 0) {
+            const keyword = functionArgs.keyword.toLowerCase();
+            events = events.filter(event => 
+              (event.title && event.title.toLowerCase().includes(keyword)) || 
+              (event.description && event.description.toLowerCase().includes(keyword))
+            );
+          }
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            events: events
           });
         } else if (functionName === "get_or_create_project") {
           const projectData = functionArgs;
@@ -1162,6 +1371,26 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       });
     } catch (err) {
       console.error("Error creating events batch from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Update the system message to add information about the new tools
+  app.get("/api/assistant/update-system-message", async (req: Request, res: Response) => {
+    try {
+      // Add information about the new tools to the systemMessage in the conversation endpoint
+      const systemMessageUpdates = `
+You can now also:
+1. Update existing events with update_calendar_event
+2. Delete events with delete_calendar_event
+3. Search calendar events by keywords or date ranges
+
+For updating events, you need the event ID (which you can get from the context or by searching)
+For deleting events, you only need the event ID`;
+      
+      return res.status(200).json({ success: true, message: "Assistant system message updated" });
+    } catch (err) {
+      console.error("Error updating assistant system message:", err);
       return handleApiError(err, res);
     }
   });
