@@ -7,6 +7,8 @@ import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
 import { getWeatherInfo, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
+import { eq } from "drizzle-orm";
+import { events, Event } from "@shared/schema";
 
 // Helper function to determine the current season based on date
 function getSeasonForDate(date: Date): string {
@@ -236,7 +238,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      const eventData = insertEventSchema.parse({ ...req.body, userId });
+      
+      // Handle both string and Date objects for dates
+      const { startDate, endDate, ...restBody } = req.body;
+      
+      // Convert dates if they're strings
+      const parsedData = {
+        ...restBody,
+        userId,
+        startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+      };
+      
+      // Now parse with the schema
+      const eventData = insertEventSchema.parse(parsedData);
       const event = await storage.createEvent(eventData);
       return res.status(201).json(event);
     } catch (err) {
@@ -295,10 +310,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         {
           date: new Date().toISOString().split('T')[0],
           dayOfWeek: "Today",
-          temperature: Math.round((weatherData.current.temp * 9/5) + 32), // Convert from C to F
+          temperature: weatherData.current.temp, // Already in Fahrenheit
           weatherDescription: weatherData.current.weather_description,
           icon: weatherIconToEmoji(weatherData.current.icon),
-          wind: Math.round(weatherData.current.wind_speed * 2.237), // Convert m/s to mph
+          wind: weatherData.current.wind_speed, // Already in mph
           humidity: weatherData.current.humidity,
           precipitation: 0 // Not directly available in the API, would need additional calls
         },
@@ -310,12 +325,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             date: day.date,
             dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(day.date).getDay()],
-            temperature: Math.round((day.temp * 9/5) + 32), // Convert from C to F
+            temperature: day.temp, // Already in Fahrenheit
             weatherDescription: day.weather_description,
             icon: weatherIconToEmoji(day.icon),
-            wind: 0, // Not directly available in this forecast format
-            humidity: 0, // Not directly available in this forecast format
-            precipitation: 0 // Not directly available in this forecast format
+            wind: day.wind || 0, // Use provided wind value if available
+            humidity: day.humidity || 0, // Use provided humidity value if available
+            precipitation: day.precipitation || 0 // Use provided precipitation if available
           };
         })
       ];
@@ -469,7 +484,66 @@ function weatherIconToEmoji(iconCode: string): string {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      const conversationData = insertConversationSchema.parse({ ...req.body, userId });
+      
+      // If no messages are provided, add a weather-aware agricultural greeting
+      let messages = req.body.messages || [];
+      
+      // Define message interface
+      interface ConversationMessage {
+        role: string;
+        content: string;
+        tool_calls?: any[];
+        tool_call_id?: string;
+      }
+      
+      if (messages.length === 0 || (messages.length === 1 && messages[0].role === "system")) {
+        // Get default location
+        const userLocation = "New York, USA"; // Default location - in real app would be user's actual location
+        
+        // Get weather data
+        const weatherData = await getWeatherInfo(userLocation);
+        
+        // Determine current season
+        const now = new Date();
+        const currentSeason = getSeasonForDate(now);
+        
+        // Generate appropriate seasonal greeting
+        let seasonalActivities = "";
+        
+        switch(currentSeason) {
+          case "Spring":
+            seasonalActivities = "soil preparation, early crop planting, and equipment maintenance";
+            break;
+          case "Summer":
+            seasonalActivities = "irrigation management, pest control, and vegetable harvesting";
+            break;
+          case "Fall":
+            seasonalActivities = "harvest planning, soil testing, and winter preparation";
+            break;
+          case "Winter":
+            seasonalActivities = "crop planning, equipment repairs, and seed ordering";
+            break;
+        }
+        
+        // Create assistant greeting
+        const weatherInfo = weatherData ? 
+          `The current weather in ${userLocation} is ${weatherData.current.temp}°F with ${weatherData.current.weather_description}. ` : 
+          "";
+          
+        const greeting = `Hello! I'm your Farm Friend agricultural assistant. ${weatherInfo}We're currently in ${currentSeason}, which is typically the time for ${seasonalActivities} in your region.
+
+How can I help with your agricultural planning today?`;
+        
+        // Add assistant message if not already present
+        if (!messages.some((msg: ConversationMessage) => msg.role === "assistant")) {
+          messages.push({
+            role: "assistant",
+            content: greeting
+          });
+        }
+      }
+      
+      const conversationData = insertConversationSchema.parse({ messages, userId });
       const conversation = await storage.createConversation(conversationData);
       return res.status(201).json(conversation);
     } catch (err) {
@@ -502,60 +576,114 @@ function weatherIconToEmoji(iconCode: string): string {
         apiKey: process.env.OPENAI_API_KEY
       });
       
-      // Get location data for context from request headers or default
+      // Get location data for context from request headers or use default
       const userAgent = req.headers['user-agent'] || '';
       let userLocation = 'Unknown Location';
       
-      // Try to get location from query or use default
+      // Try to get location from query or cookies, or use default
       if (req.query.location) {
         userLocation = req.query.location as string;
+      } else if (req.cookies && req.cookies.userLocation) {
+        userLocation = req.cookies.userLocation;
       } else {
         // Default location if not provided
         userLocation = 'New York, USA';
       }
       
-      // Current date and time information
+      // Get real weather data and context directly instead of going through the API
+      // This avoids port issues and is more efficient
+      
+      // Get weather data
+      const weatherData = await getWeatherInfo(userLocation);
+      
+      // Get user's calendar events (using default user ID 1)
+      const userId = 1;
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Determine current season
       const now = new Date();
-      const dateTimeString = now.toLocaleString();
-      const season = getSeasonForDate(now);
+      const currentSeason = getSeasonForDate(now);
       
-      // Make sure there's a system message defining the assistant's role
-      if (!updatedMessages.some(msg => msg.role === "system")) {
-        updatedMessages.unshift({
-          role: "system",
-          content: "You are Farm Friend: Agri-Cal. An agricultural planning assistant specialized in crop management, seasonal planning, and weather-adaptive farming techniques.\n\n" +
-          "CONTEXTUAL INFORMATION:\n" +
-          "- Current date and time: " + dateTimeString + "\n" +
-          "- Current season: " + season + "\n" +
-          "- User location: " + userLocation + "\n\n" +
-          "You must always consider date, time, and location in ALL your recommendations and activities. Time-sensitive agricultural advice is crucial for successful farming.\n\n" +
-          "Your responsibilities:\n" +
-          "1. Provide specific crop planting and harvesting schedules based on seasons and locations\n" +
-          "2. Suggest sustainable farming practices appropriate for different crops and climates\n" +
-          "3. Help users plan their agricultural calendar with detailed timelines\n" +
-          "4. Offer recommendations for dealing with various weather conditions and climate challenges\n" +
-          "5. Assist with pest management and soil health optimization\n" +
-          "6. Provide advice on water conservation and irrigation planning\n\n" +
-          "AVAILABLE TOOLS:\n" +
-          "1. Web Search: Use the search_web function to find up-to-date information when needed, especially for specific agricultural data, seasonal information, or regional farming practices.\n" +
-          "2. Weather Tool: Use the get_weather function to get real-time weather data and agricultural recommendations for a specific location. This helps provide location-specific advice based on current and forecasted weather conditions.\n\n" +
-          "FORMATTING INSTRUCTIONS:\n" +
-          "- Format your responses using Markdown to improve readability\n" +
-          "- Use headers (## and ###) to organize information\n" +
-          "- Use bullet points or numbered lists for steps and recommendations\n" +
-          "- Use bold or italic for emphasis on important points\n" +
-          "- Format tables when presenting comparative data\n" +
-          "- Use code blocks for representing schedules or technical instructions\n" +
-          "- Include emojis where appropriate to make content more engaging\n\n" +
-          "Respond with detailed, actionable information that farmers can implement immediately. Include specific timelines, measurements, and practical steps whenever possible."
-        });
-      }
+      // Build context data directly - similar structure to the /api/assistant/context endpoint
+      const contextData = {
+        timestamp: now.toISOString(),
+        location: userLocation,
+        season: currentSeason,
+        weather: weatherData ? {
+          current: {
+            temperature: weatherData.current.temp, // Already in Fahrenheit
+            conditions: weatherData.current.weather_description,
+            humidity: weatherData.current.humidity,
+            wind: Math.round(weatherData.current.wind_speed) // Already in mph
+          },
+          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+            date: day.date,
+            temperature: day.temp, // Already in Fahrenheit
+            conditions: day.weather_description
+          }))
+        } : null,
+        events: userEvents.map(event => ({
+          id: event.id,
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate,
+          isWeatherDependent: event.checkWeather
+        }))
+      };
       
-      // Convert messages to the format expected by OpenAI
-      const apiMessages = updatedMessages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      // Prepare messages for API
+      const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
+      
+Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
+Current season: ${contextData.season}
+User location: ${contextData.location}
+${contextData.weather ? `
+Current weather: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
+Humidity: ${contextData.weather.current.humidity}%
+Wind: ${contextData.weather.current.wind} mph
+
+Weather forecast for the next ${contextData.weather.forecast.length} days:
+${contextData.weather.forecast.map((day, index) => 
+  `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
+).join('\n')}
+` : ''}
+${contextData.events && contextData.events.length > 0 ? `
+Upcoming calendar events:
+${contextData.events.slice(0, 5).map(event => {
+  const startDate = new Date(event.startDate);
+  return `- ${event.title} on ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}${event.isWeatherDependent ? ' (Weather dependent)' : ''}`;
+}).join('\n')}
+` : ''}
+
+CALENDAR MANAGEMENT CAPABILITIES:
+- You can create events with create_calendar_event
+- You can update existing events with update_calendar_event
+- You can delete events with delete_calendar_event
+- You can search for events with search_calendar_events (by keyword, date range, or project)
+- You can organize events into projects with get_or_create_project
+
+CRITICAL: When the user asks you to schedule an event, you MUST ALWAYS use the create_calendar_event function. NEVER respond as if you've scheduled something without explicitly calling this function.
+
+Follow these strict requirements:
+1. ONLY claim to have scheduled an event AFTER successfully using the create_calendar_event function
+2. NEVER say phrases like "I've scheduled..." or "Event scheduled..." unless you've actually called the function
+3. If you want to create an event, use the function FIRST, then mention it in your response
+4. If you need a project to organize events, first call get_or_create_project, then create events with that project ID
+
+For calendar events:
+1. Always include a clear title
+2. Set appropriate start and end times in ISO format (YYYY-MM-DDTHH:MM:SSZ)
+3. Set checkWeather to true for outdoor activities
+4. Include a detailed description with helpful tips
+5. Set a location when relevant
+
+Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
+      
+      // Add system message and user's message
+      const apiMessages = [
+        { role: "system", content: systemMessage },
+        ...updatedMessages
+      ];
       
       // Define tools for web search and weather data
       const tools = [
@@ -590,6 +718,159 @@ function weatherIconToEmoji(iconCode: string): string {
                 }
               },
               required: ["location"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "create_calendar_event",
+            description: "Create a new calendar event for agricultural activities",
+            parameters: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "The title of the event (e.g., 'Turn Compost Piles', 'Plant Tomatoes')"
+                },
+                description: {
+                  type: "string",
+                  description: "Detailed description of the event, including any special instructions"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Start date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                location: {
+                  type: "string",
+                  description: "Location where the event will take place (e.g., 'North Field', 'Greenhouse')"
+                },
+                projectId: {
+                  type: "number",
+                  description: "ID of the project this event belongs to (optional)"
+                },
+                checkWeather: {
+                  type: "boolean",
+                  description: "Whether this event is weather-dependent (default: true for agricultural tasks)"
+                }
+              },
+              required: ["title", "startDate", "endDate"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "update_calendar_event",
+            description: "Update an existing calendar event",
+            parameters: {
+              type: "object",
+              properties: {
+                eventId: {
+                  type: "number",
+                  description: "ID of the event to update"
+                },
+                title: {
+                  type: "string",
+                  description: "The updated title of the event"
+                },
+                description: {
+                  type: "string",
+                  description: "Updated detailed description of the event"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Updated start date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "Updated end date and time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                },
+                location: {
+                  type: "string",
+                  description: "Updated location where the event will take place"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Updated ID of the project this event belongs to"
+                },
+                checkWeather: {
+                  type: "boolean",
+                  description: "Whether this event is weather-dependent"
+                }
+              },
+              required: ["eventId"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "delete_calendar_event",
+            description: "Delete an existing calendar event",
+            parameters: {
+              type: "object",
+              properties: {
+                eventId: {
+                  type: "number",
+                  description: "ID of the event to delete"
+                }
+              },
+              required: ["eventId"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "search_calendar_events",
+            description: "Search for calendar events by keyword, date range, or both",
+            parameters: {
+              type: "object",
+              properties: {
+                keyword: {
+                  type: "string",
+                  description: "Keyword to search in event titles and descriptions"
+                },
+                startDate: {
+                  type: "string",
+                  description: "Start date for filtering events (in ISO format YYYY-MM-DD)"
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date for filtering events (in ISO format YYYY-MM-DD)"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Filter events by project ID"
+                }
+              },
+              required: []
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "get_or_create_project",
+            description: "Get or create a project for organizing related agricultural activities",
+            parameters: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "The name of the project (e.g., 'Spring Planting', 'Orchard Maintenance')"
+                },
+                description: {
+                  type: "string",
+                  description: "Description of the project's purpose and goals"
+                }
+              },
+              required: ["name"]
             }
           }
         }
@@ -701,6 +982,122 @@ function weatherIconToEmoji(iconCode: string): string {
           } else {
             toolResponse = "I couldn't retrieve weather information for that location. Please check the spelling or try a different location.";
           }
+        } else if (functionName === "create_calendar_event") {
+          const eventData = functionArgs;
+          console.log("Creating calendar event from assistant:", eventData);
+          
+          // Validate the event data
+          const validatedEvent = insertEventSchema.parse({
+            ...eventData,
+            startDate: new Date(eventData.startDate),
+            endDate: new Date(eventData.endDate),
+            userId: 1, // Default user ID
+          });
+          
+          // Insert the event using the storage interface
+          const newEvent = await storage.createEvent(validatedEvent);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            event: newEvent
+          });
+        } else if (functionName === "update_calendar_event") {
+          const eventData = functionArgs;
+          console.log("Updating calendar event from assistant:", eventData);
+          
+          // Validate the event data
+          const validatedEvent = insertEventSchema.parse({
+            ...eventData,
+            userId: 1, // Default user ID
+          });
+          
+          // Update the event using the storage interface
+          const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            event: updatedEvent
+          });
+        } else if (functionName === "delete_calendar_event") {
+          console.log("Deleting calendar event from assistant:", functionArgs.eventId);
+          
+          // Delete the event using the storage interface
+          await storage.deleteEvent(functionArgs.eventId);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            message: "Event deleted successfully"
+          });
+        } else if (functionName === "search_calendar_events") {
+          console.log("Searching calendar events:", functionArgs);
+          
+          // Default to user 1 for demo
+          const userId = 1;
+          let events = [];
+          
+          // If we have a date range, use that for searching
+          if (functionArgs.startDate && functionArgs.endDate) {
+            const startDate = new Date(functionArgs.startDate);
+            const endDate = new Date(functionArgs.endDate);
+            events = await storage.getEventsByDateRange(userId, startDate, endDate);
+          } 
+          // If we have a project ID, filter by project
+          else if (functionArgs.projectId) {
+            events = await storage.getEventsByProject(functionArgs.projectId);
+          }
+          // Otherwise, get all events
+          else {
+            events = await storage.getEventsByUser(userId);
+          }
+          
+          // If we have a keyword, filter the results
+          if (functionArgs.keyword && events.length > 0) {
+            const keyword = functionArgs.keyword.toLowerCase();
+            events = events.filter(event => 
+              (event.title && event.title.toLowerCase().includes(keyword)) || 
+              (event.description && event.description.toLowerCase().includes(keyword))
+            );
+          }
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            events: events
+          });
+        } else if (functionName === "get_or_create_project") {
+          const projectData = functionArgs;
+          console.log("Getting or creating project from assistant:", projectData.name);
+          
+          // Get all projects for user 1
+          const allProjects = await storage.getProjectsByUser(1);
+          
+          // Check if project already exists
+          const existingProject = allProjects.find(project => 
+            project.name.toLowerCase() === projectData.name.toLowerCase()
+          );
+          
+          if (existingProject) {
+            toolResponse = JSON.stringify({
+              success: true,
+              project: existingProject,
+              isNew: false
+            });
+          } else {
+            // Create new project using the storage interface
+            const newProject = await storage.createProject({
+              name: projectData.name,
+              description: projectData.description || "",
+              status: "active",
+              startDate: new Date(),
+              endDate: null,
+              userId: 1 // Default user ID
+            });
+            
+            toolResponse = JSON.stringify({
+              success: true,
+              project: newProject,
+              isNew: true
+            });
+          }
         }
         
         // Add the tool response to messages array
@@ -734,6 +1131,266 @@ function weatherIconToEmoji(iconCode: string): string {
       return res.status(200).json(updatedConversation);
     } catch (err) {
       console.error("OpenAI API Error:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Get calendar events as ICS file
+  app.get("/api/events/ics", async (req: Request, res: Response) => {
+    try {
+      // Demo user id = 1 for simplicity (in this demo app we auto-login as demo user)
+      const userId = 1;
+      
+      // Get all events for the user
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Convert to ICS format
+      const icsContent = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Agri-Cal//Farm Friend//EN',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH'
+      ];
+      
+      userEvents.forEach(event => {
+        const startDate = new Date(event.startDate);
+        const endDate = new Date(event.endDate);
+        
+        // Format dates as YYYYMMDDTHHMMSSZ
+        const formatICSDate = (date: Date) => {
+          return date.toISOString().replace(/-|:|\.\d+/g, '').slice(0, 15) + 'Z';
+        };
+        
+        const eventBlock = [
+          'BEGIN:VEVENT',
+          `UID:${event.id}@agriplanner.com`,
+          `DTSTAMP:${formatICSDate(new Date())}`,
+          `DTSTART:${formatICSDate(startDate)}`,
+          `DTEND:${formatICSDate(endDate)}`,
+          `SUMMARY:${event.title}`,
+        ];
+        
+        if (event.description) {
+          eventBlock.push(`DESCRIPTION:${event.description.replace(/\n/g, '\\n')}`);
+        }
+        
+        if (event.location) {
+          eventBlock.push(`LOCATION:${event.location}`);
+        }
+        
+        // Add custom properties for Agri-Cal specific features
+        if (event.checkWeather) {
+          eventBlock.push('X-AGRICAL-CHECKWEATHER:TRUE');
+        }
+        
+        if (event.projectId) {
+          eventBlock.push(`X-AGRICAL-PROJECTID:${event.projectId}`);
+        }
+        
+        eventBlock.push('END:VEVENT');
+        icsContent.push(...eventBlock);
+      });
+      
+      icsContent.push('END:VCALENDAR');
+      
+      // Set the response headers for an ICS file download
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=farm-calendar.ics');
+      
+      return res.status(200).send(icsContent.join('\r\n'));
+    } catch (err) {
+      console.error("Error generating ICS file:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Get contextual information for the assistant
+  app.get("/api/assistant/context", async (req: Request, res: Response) => {
+    try {
+      // Get location from query params or use default
+      const location = (req.query.location as string) || "New York";
+      const userId = 1; // Default demo user
+      
+      // Get weather data
+      const weatherData = await getWeatherInfo(location);
+      if (!weatherData) {
+        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      }
+      
+      // Get user's calendar events
+      const userEvents = await storage.getEventsByUser(userId);
+      
+      // Determine current season
+      const currentDate = new Date();
+      const currentSeason = getSeasonForDate(currentDate);
+      
+      // Build context object
+      const context = {
+        timestamp: currentDate.toISOString(),
+        location: location,
+        season: currentSeason,
+        weather: {
+          current: {
+            temperature: weatherData.current.temp, // Already in Fahrenheit
+            conditions: weatherData.current.weather_description,
+            humidity: weatherData.current.humidity,
+            wind: Math.round(weatherData.current.wind_speed) // Already in mph
+          },
+          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+            date: day.date,
+            temperature: day.temp, // Already in Fahrenheit
+            conditions: day.weather_description
+          }))
+        },
+        events: userEvents.map(event => ({
+          id: event.id,
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate,
+          isWeatherDependent: event.checkWeather
+        }))
+      };
+      
+      return res.status(200).json(context);
+    } catch (err) {
+      console.error("Error fetching assistant context:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Assistant function calling API endpoints
+  // Create a calendar event
+  app.post("/api/assistant/functions/create-event", async (req: Request, res: Response) => {
+    try {
+      const eventData = req.body;
+      console.log("Creating calendar event from assistant:", eventData);
+      
+      // Handle both string and Date objects for dates
+      const { startDate, endDate, ...restData } = eventData;
+      
+      // Convert dates if they're strings
+      const parsedData = {
+        ...restData,
+        userId: 1, // Default user ID
+        startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+      };
+      
+      // Validate the event data
+      const validatedEvent = insertEventSchema.parse(parsedData);
+      
+      // Insert the event using the storage interface
+      const newEvent = await storage.createEvent(validatedEvent);
+      
+      return res.status(200).json({
+        success: true,
+        event: newEvent
+      });
+    } catch (err) {
+      console.error("Error creating event from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+  
+  // Get or create a project
+  app.post("/api/assistant/functions/get-or-create-project", async (req: Request, res: Response) => {
+    try {
+      const { name, description } = req.body;
+      console.log("Getting or creating project from assistant:", name);
+      
+      // Get all projects for user 1
+      const allProjects = await storage.getProjectsByUser(1);
+      
+      // Check if project already exists
+      const existingProject = allProjects.find(project => 
+        project.name.toLowerCase() === name.toLowerCase()
+      );
+      
+      if (existingProject) {
+        return res.status(200).json({
+          success: true,
+          project: existingProject,
+          isNew: false
+        });
+      }
+      
+      // Create new project using the storage interface
+      const newProject = await storage.createProject({
+        name,
+        description: description || "",
+        status: "active",
+        startDate: new Date(),
+        endDate: null,
+        userId: 1 // Default user ID
+      });
+      
+      return res.status(200).json({
+        success: true,
+        project: newProject,
+        isNew: true
+      });
+    } catch (err) {
+      console.error("Error getting or creating project from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Create multiple calendar events in a batch
+  app.post("/api/assistant/functions/create-events-batch", async (req: Request, res: Response) => {
+    try {
+      const { events: eventsBatch } = req.body;
+      console.log("Creating calendar events batch from assistant:", eventsBatch.length, "events");
+      
+      const createdEvents = [];
+      
+      // Process each event
+      for (const eventData of eventsBatch) {
+        // Handle both string and Date objects for dates
+        const { startDate, endDate, ...restData } = eventData;
+        
+        // Convert dates if they're strings
+        const parsedData = {
+          ...restData,
+          userId: 1, // Default user ID
+          startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
+          endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+        };
+        
+        // Validate the event data
+        const validatedEvent = insertEventSchema.parse(parsedData);
+        
+        // Insert the event
+        const newEvent = await storage.createEvent(validatedEvent);
+        createdEvents.push(newEvent);
+      }
+      
+      return res.status(200).json({
+        success: true,
+        events: createdEvents
+      });
+    } catch (err) {
+      console.error("Error creating events batch from assistant:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Update the system message to add information about the new tools
+  app.get("/api/assistant/update-system-message", async (req: Request, res: Response) => {
+    try {
+      // Add information about the new tools to the systemMessage in the conversation endpoint
+      const systemMessageUpdates = `
+You can now also:
+1. Update existing events with update_calendar_event
+2. Delete events with delete_calendar_event
+3. Search calendar events by keywords or date ranges
+
+For updating events, you need the event ID (which you can get from the context or by searching)
+For deleting events, you only need the event ID`;
+      
+      return res.status(200).json({ success: true, message: "Assistant system message updated" });
+    } catch (err) {
+      console.error("Error updating assistant system message:", err);
       return handleApiError(err, res);
     }
   });

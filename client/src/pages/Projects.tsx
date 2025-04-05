@@ -17,11 +17,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/lib/calendarUtils";
+import { PROJECT_COLORS } from "@/lib/colorUtils";
 
 export default function Projects() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   
   // Form state
   const [name, setName] = useState("");
@@ -29,6 +32,8 @@ export default function Projects() {
   const [status, setStatus] = useState("planning");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [color, setColor] = useState("default");
+  const [customColor, setCustomColor] = useState("#6366f1"); // Default indigo color
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -39,25 +44,35 @@ export default function Projects() {
   
   const createProjectMutation = useMutation({
     mutationFn: async (projectData: any) => {
-      const response = await apiRequest("POST", "/api/projects", projectData);
+      const url = isEditing && selectedProject 
+        ? `/api/projects/${selectedProject.id}` 
+        : "/api/projects";
+      const method = isEditing ? "PUT" : "POST";
+      
+      const response = await apiRequest(method, url, projectData);
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
-        title: "Project created",
-        description: "Your project has been created successfully."
+        title: isEditing ? "Project updated" : "Project created",
+        description: isEditing 
+          ? "Your project has been updated successfully."
+          : "Your project has been created successfully."
       });
       setIsCreateModalOpen(false);
       resetForm();
+      setIsEditing(false);
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: "There was a problem creating your project.",
+        description: isEditing 
+          ? "There was a problem updating your project."
+          : "There was a problem creating your project.",
         variant: "destructive"
       });
-      console.error("Error creating project:", error);
+      console.error(isEditing ? "Error updating project:" : "Error creating project:", error);
     }
   });
   
@@ -77,6 +92,11 @@ export default function Projects() {
     setStatus("planning");
     setStartDate("");
     setEndDate("");
+    setColor("default");
+    setCustomColor("#6366f1");
+    setShowColorPicker(false);
+    setIsEditing(false);
+    setSelectedProject(null);
   };
   
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -97,7 +117,8 @@ export default function Projects() {
       status,
       startDate: startDate ? new Date(startDate) : null,
       endDate: endDate ? new Date(endDate) : null,
-      progress: 0
+      progress: isEditing && selectedProject ? selectedProject.progress : 0,
+      color: color === "custom" ? customColor : (color === "default" ? null : color)
     };
     
     createProjectMutation.mutate(projectData);
@@ -122,13 +143,31 @@ export default function Projects() {
         return "text-neutral-600";
     }
   };
+  
+  // Color picker options
+  const colorOptions = [
+    { value: "default", label: "Default (Auto)" },
+    { value: "#10b981", label: "Green" },
+    { value: "#6366f1", label: "Indigo" },
+    { value: "#f59e0b", label: "Amber" },
+    { value: "#ef4444", label: "Red" },
+    { value: "#0ea5e9", label: "Blue" },
+    { value: "#8b5cf6", label: "Purple" },
+    { value: "#f43f5e", label: "Rose" },
+    { value: "#0d9488", label: "Teal" },
+    { value: "custom", label: "Custom Color" }
+  ];
 
   return (
     <>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-serif font-bold text-neutral-900">Projects</h1>
         <Button 
-          onClick={() => setIsCreateModalOpen(true)}
+          onClick={() => {
+            resetForm();
+            setIsEditing(false);
+            setIsCreateModalOpen(true);
+          }}
           className="bg-primary hover:bg-primary-dark"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
@@ -169,7 +208,7 @@ export default function Projects() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-lg font-medium text-neutral-900">
-              Create New Project
+              {isEditing ? "Edit Project" : "Create New Project"}
             </DialogTitle>
           </DialogHeader>
           
@@ -215,6 +254,60 @@ export default function Projects() {
               </Select>
             </div>
             
+            <div>
+              <Label htmlFor="project-color">Project Color</Label>
+              <Select 
+                value={color} 
+                onValueChange={(val) => {
+                  setColor(val);
+                  setShowColorPicker(val === "custom");
+                }}
+              >
+                <SelectTrigger className="w-full mt-1" id="project-color">
+                  <SelectValue placeholder="Select color" />
+                </SelectTrigger>
+                <SelectContent>
+                  {colorOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <div className="flex items-center gap-2">
+                        {option.value && (
+                          <div 
+                            className="w-4 h-4 rounded-full" 
+                            style={{ 
+                              backgroundColor: option.value === "custom" ? customColor : option.value || "#6366f1" 
+                            }}
+                          ></div>
+                        )}
+                        <span>{option.label}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              
+              {showColorPicker && (
+                <div className="mt-2">
+                  <Label htmlFor="custom-color">Pick Custom Color</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input 
+                      type="color" 
+                      id="custom-color"
+                      value={customColor}
+                      onChange={(e) => setCustomColor(e.target.value)}
+                      className="w-10 h-10 p-1 rounded cursor-pointer"
+                    />
+                    <Input 
+                      type="text" 
+                      value={customColor}
+                      onChange={(e) => setCustomColor(e.target.value)}
+                      className="flex-1"
+                      placeholder="#HEX"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="project-start">Start Date</Label>
@@ -244,7 +337,9 @@ export default function Projects() {
                 className="bg-primary hover:bg-primary-dark"
                 disabled={createProjectMutation.isPending}
               >
-                {createProjectMutation.isPending ? "Creating..." : "Create Project"}
+                {createProjectMutation.isPending 
+                  ? (isEditing ? "Updating..." : "Creating...") 
+                  : (isEditing ? "Update Project" : "Create Project")}
               </Button>
             </DialogFooter>
           </form>
@@ -332,7 +427,39 @@ export default function Projects() {
                 >
                   Close
                 </Button>
-                <Button className="bg-primary hover:bg-primary-dark">
+                <Button 
+                  onClick={() => {
+                    // Pre-fill form with selected project data
+                    setName(selectedProject.name);
+                    setDescription(selectedProject.description || "");
+                    setStatus(selectedProject.status);
+                    setStartDate(selectedProject.startDate 
+                      ? new Date(selectedProject.startDate).toISOString().split('T')[0]
+                      : "");
+                    setEndDate(selectedProject.endDate
+                      ? new Date(selectedProject.endDate).toISOString().split('T')[0]
+                      : "");
+                    
+                    // Handle color pre-filling
+                    const existingColor = selectedProject.color;
+                    if (!existingColor) {
+                      setColor("default");
+                    } else if (colorOptions.some(option => option.value === existingColor)) {
+                      setColor(existingColor);
+                      setShowColorPicker(false);
+                    } else {
+                      setColor("custom");
+                      setCustomColor(existingColor);
+                      setShowColorPicker(true);
+                    }
+                    
+                    // Close view modal and open create/edit modal
+                    setIsViewModalOpen(false);
+                    setIsCreateModalOpen(true);
+                    setIsEditing(true);
+                  }}
+                  className="bg-primary hover:bg-primary-dark"
+                >
                   Edit Project
                 </Button>
               </DialogFooter>

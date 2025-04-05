@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Event } from "@shared/schema";
+import { Event, WeatherForecast } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { formatDate, isToday, getEventsForDay } from "@/lib/calendarUtils";
@@ -58,7 +58,11 @@ function TimeSlot({
   );
 }
 
-export default function DayView() {
+interface DayViewProps {
+  weatherData?: WeatherForecast[];
+}
+
+export default function DayView({ weatherData }: DayViewProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
   const { currentDate } = useCalendar();

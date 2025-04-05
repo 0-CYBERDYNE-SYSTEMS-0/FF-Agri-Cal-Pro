@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Event } from "@shared/schema";
+import { Event, WeatherForecast } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { 
@@ -85,8 +85,14 @@ function MonthCard({
   );
 }
 
-export default function YearView() {
-  const { currentDate, setCurrentDate, setView } = useCalendar();
+interface YearViewProps {
+  weatherData?: WeatherForecast[];
+}
+
+export default function YearView({ weatherData }: YearViewProps) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const { currentDate, setView, setCurrentDate } = useCalendar();
   
   const { data: events = [], isLoading } = useQuery<Event[]>({
     queryKey: ["/api/events"],

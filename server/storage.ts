@@ -53,10 +53,12 @@ export class MemStorage implements IStorage {
     this.currentConversationId = 1;
 
     // Initialize with sample data
-    this.initSampleData();
+    this.initSampleData().catch(error => {
+      console.error("Error initializing sample data:", error);
+    });
   }
 
-  private initSampleData() {
+  private async initSampleData() {
     // Create a sample user
     const sampleUser: InsertUser = {
       username: "demo",
@@ -65,7 +67,7 @@ export class MemStorage implements IStorage {
       displayName: "Sarah Johnson",
       profileImage: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
     };
-    const user = this.createUser(sampleUser);
+    const user = await this.createUser(sampleUser);
 
     // Create sample projects
     const projectsData: InsertProject[] = [
@@ -95,10 +97,32 @@ export class MemStorage implements IStorage {
         startDate: new Date(2023, 0, 1), // January 1, 2023
         endDate: new Date(2023, 11, 31), // December 31, 2023
         progress: 70
+      },
+      {
+        userId: user.id,
+        name: "Fruit Orchard Management",
+        description: "Maintaining and harvesting fruit trees",
+        status: "active",
+        startDate: new Date(2023, 2, 1), // March 1, 2023
+        endDate: new Date(2023, 10, 30), // November 30, 2023
+        progress: 55
+      },
+      {
+        userId: user.id,
+        name: "Winter Cover Crops",
+        description: "Planning and planting cover crops for soil health",
+        status: "planning",
+        startDate: new Date(2023, 8, 1), // September 1, 2023
+        endDate: new Date(2024, 2, 28), // February 28, 2024
+        progress: 10
       }
     ];
 
-    const projects = projectsData.map(project => this.createProject(project));
+    const projects = [];
+    for (const projectData of projectsData) {
+      const project = await this.createProject(projectData);
+      projects.push(project);
+    }
 
     // Create sample events
     const now = new Date();
@@ -196,10 +220,227 @@ export class MemStorage implements IStorage {
         checkWeather: true,
         isRecurring: false,
         recurringPattern: null
+      },
+      
+      // New events for development and testing
+      // Current month events
+      {
+        userId: user.id,
+        projectId: projects[0].id,
+        title: "Apply Organic Fertilizer",
+        description: "Apply compost tea to vegetable beds for nutrient boost",
+        startDate: new Date(currentYear, currentMonth, 5, 8, 0), // 8 AM
+        endDate: new Date(currentYear, currentMonth, 5, 10, 0), // 10 AM
+        allDay: false,
+        location: "Vegetable Garden",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[0].id,
+        title: "Install Tomato Cages",
+        description: "Install support structures for growing tomato plants",
+        startDate: new Date(currentYear, currentMonth, 15, 9, 0), // 9 AM
+        endDate: new Date(currentYear, currentMonth, 15, 11, 0), // 11 AM
+        allDay: false,
+        location: "Vegetable Garden",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[0].id,
+        title: "Pest Monitoring",
+        description: "Check plants for signs of pests and apply organic deterrents if needed",
+        startDate: new Date(currentYear, currentMonth, 10, 16, 0), // 4 PM
+        endDate: new Date(currentYear, currentMonth, 10, 17, 0), // 5 PM
+        allDay: false,
+        location: "All Gardens",
+        checkWeather: false,
+        isRecurring: true,
+        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 10) }
+      },
+      {
+        userId: user.id,
+        projectId: projects[3].id,
+        title: "Prune Fruit Trees",
+        description: "Summer pruning of fruit trees to control growth and improve airflow",
+        startDate: new Date(currentYear, currentMonth, 20, 10, 0), // 10 AM
+        endDate: new Date(currentYear, currentMonth, 20, 14, 0), // 2 PM
+        allDay: false,
+        location: "Orchard",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[3].id,
+        title: "Fruit Thinning",
+        description: "Remove excess fruit to improve size and quality of remaining fruit",
+        startDate: new Date(currentYear, currentMonth, 8, 9, 0), // 9 AM
+        endDate: new Date(currentYear, currentMonth, 8, 12, 0), // 12 PM
+        allDay: false,
+        location: "Orchard",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[2].id,
+        title: "Add New Materials to Compost",
+        description: "Add fresh green and brown materials to compost pile",
+        startDate: new Date(currentYear, currentMonth, 7, 14, 0), // 2 PM
+        endDate: new Date(currentYear, currentMonth, 7, 15, 0), // 3 PM
+        allDay: false,
+        location: "Compost Area",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[4].id,
+        title: "Cover Crop Research",
+        description: "Research appropriate cover crops for local climate and soil needs",
+        startDate: new Date(currentYear, currentMonth, 25, 13, 0), // 1 PM
+        endDate: new Date(currentYear, currentMonth, 25, 16, 0), // 4 PM
+        allDay: false,
+        location: "Home Office",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[4].id,
+        title: "Order Cover Crop Seeds",
+        description: "Purchase selected cover crop seeds from supplier",
+        startDate: new Date(currentYear, currentMonth, 30, 10, 0), // 10 AM
+        endDate: new Date(currentYear, currentMonth, 30, 11, 0), // 11 AM
+        allDay: false,
+        location: "Home Office",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      
+      // Next month events
+      {
+        userId: user.id,
+        projectId: projects[0].id,
+        title: "Harvest Summer Vegetables",
+        description: "Harvest peak season vegetables (tomatoes, peppers, zucchini)",
+        startDate: new Date(currentYear, currentMonth + 1, 3, 8, 0), // 8 AM
+        endDate: new Date(currentYear, currentMonth + 1, 3, 10, 0), // 10 AM
+        allDay: false,
+        location: "Vegetable Garden",
+        checkWeather: true,
+        isRecurring: true,
+        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 30) }
+      },
+      {
+        userId: user.id,
+        projectId: projects[3].id,
+        title: "Early Apple Harvest",
+        description: "Harvest early ripening apple varieties",
+        startDate: new Date(currentYear, currentMonth + 1, 15, 9, 0), // 9 AM
+        endDate: new Date(currentYear, currentMonth + 1, 15, 12, 0), // 12 PM
+        allDay: false,
+        location: "Orchard",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[1].id,
+        title: "Soil Testing",
+        description: "Collect soil samples for testing before crop rotation planning",
+        startDate: new Date(currentYear, currentMonth + 1, 10, 10, 0), // 10 AM
+        endDate: new Date(currentYear, currentMonth + 1, 10, 12, 0), // 12 PM
+        allDay: false,
+        location: "All Gardens",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[0].id,
+        title: "Plant Fall Crops",
+        description: "Plant cold-tolerant vegetables for fall harvest",
+        startDate: new Date(currentYear, currentMonth + 1, 20, 9, 0), // 9 AM
+        endDate: new Date(currentYear, currentMonth + 1, 20, 13, 0), // 1 PM
+        allDay: false,
+        location: "Vegetable Garden",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[2].id,
+        title: "Compost Temperature Check",
+        description: "Monitor compost pile temperature for proper decomposition",
+        startDate: new Date(currentYear, currentMonth + 1, 5, 9, 0), // 9 AM
+        endDate: new Date(currentYear, currentMonth + 1, 5, 10, 0), // 10 AM
+        allDay: false,
+        location: "Compost Area",
+        checkWeather: false,
+        isRecurring: true,
+        recurringPattern: { frequency: "weekly", interval: 1, endDate: null }
+      },
+      
+      // Future events
+      {
+        userId: user.id,
+        projectId: projects[4].id,
+        title: "Plant Cover Crops",
+        description: "Sow cover crops in cleared garden beds",
+        startDate: new Date(currentYear, currentMonth + 2, 15, 8, 0), // 8 AM
+        endDate: new Date(currentYear, currentMonth + 2, 15, 12, 0), // 12 PM
+        allDay: false,
+        location: "Main Garden",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[3].id,
+        title: "Orchard Cleanup",
+        description: "Remove fallen fruit and debris from orchard floor",
+        startDate: new Date(currentYear, currentMonth + 2, 5, 14, 0), // 2 PM
+        endDate: new Date(currentYear, currentMonth + 2, 5, 17, 0), // 5 PM
+        allDay: false,
+        location: "Orchard",
+        checkWeather: true,
+        isRecurring: false,
+        recurringPattern: null
+      },
+      {
+        userId: user.id,
+        projectId: projects[1].id,
+        title: "Finalize Crop Rotation Plan",
+        description: "Complete comprehensive crop rotation plan based on soil test results",
+        startDate: new Date(currentYear, currentMonth + 2, 20, 13, 0), // 1 PM
+        endDate: new Date(currentYear, currentMonth + 2, 20, 17, 0), // 5 PM
+        allDay: false,
+        location: "Home Office",
+        checkWeather: false,
+        isRecurring: false,
+        recurringPattern: null
       }
     ];
 
-    eventsData.forEach(event => this.createEvent(event));
+    for (const eventData of eventsData) {
+      await this.createEvent(eventData);
+    }
 
     // Initialize sample conversation
     const sampleConversation: InsertConversation = {
@@ -207,19 +448,19 @@ export class MemStorage implements IStorage {
       messages: [
         {
           role: "assistant",
-          content: "Hello! I'm Farm Friend your agricultural planning assistant. How can I help you today?"
+          content: "Hello! I'm Farm Friend, your agricultural planning assistant. The current season is a great time for various farming activities. How can I help with your agricultural planning today?"
         },
         {
           role: "user",
-          content: "I need help planning my tomato planting schedule."
+          content: "What are some important seasonal tasks I should be planning for?"
         },
         {
           role: "assistant",
-          content: "I'd be happy to help with your tomato planting schedule! Could you tell me your location so I can provide recommendations based on your climate zone?"
+          content: "Great question about seasonal planning! To provide you with the most relevant recommendations, could you tell me your location? This will help me suggest activities based on your local climate and growing conditions."
         }
       ]
     };
-    this.createConversation(sampleConversation);
+    await this.createConversation(sampleConversation);
   }
 
   // User methods
@@ -235,7 +476,12 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.currentUserId++;
-    const user: User = { ...insertUser, id, createdAt: new Date() };
+    const user: User = { 
+      ...insertUser, 
+      id, 
+      createdAt: new Date(),
+      profileImage: insertUser.profileImage || null
+    };
     this.users.set(id, user);
     return user;
   }
@@ -253,7 +499,17 @@ export class MemStorage implements IStorage {
 
   async createProject(insertProject: InsertProject): Promise<Project> {
     const id = this.currentProjectId++;
-    const project: Project = { ...insertProject, id, createdAt: new Date() };
+    const project: Project = { 
+      ...insertProject, 
+      id, 
+      createdAt: new Date(),
+      status: insertProject.status || "active",
+      description: insertProject.description || null,
+      startDate: insertProject.startDate || null,
+      endDate: insertProject.endDate || null,
+      progress: insertProject.progress || null,
+      color: insertProject.color || null
+    };
     this.projects.set(id, project);
     return project;
   }
@@ -298,7 +554,18 @@ export class MemStorage implements IStorage {
 
   async createEvent(insertEvent: InsertEvent): Promise<Event> {
     const id = this.currentEventId++;
-    const event: Event = { ...insertEvent, id, createdAt: new Date() };
+    const event: Event = { 
+      ...insertEvent, 
+      id, 
+      createdAt: new Date(),
+      description: insertEvent.description || null,
+      projectId: insertEvent.projectId || null,
+      allDay: insertEvent.allDay || null,
+      location: insertEvent.location || null,
+      checkWeather: insertEvent.checkWeather || null,
+      isRecurring: insertEvent.isRecurring || null,
+      recurringPattern: insertEvent.recurringPattern || null
+    };
     this.events.set(id, event);
     return event;
   }
@@ -329,7 +596,12 @@ export class MemStorage implements IStorage {
 
   async createConversation(insertConversation: InsertConversation): Promise<Conversation> {
     const id = this.currentConversationId++;
-    const conversation: Conversation = { ...insertConversation, id, createdAt: new Date() };
+    const conversation: Conversation = { 
+      ...insertConversation, 
+      id, 
+      createdAt: new Date(),
+      messages: insertConversation.messages || []
+    };
     this.conversations.set(id, conversation);
     return conversation;
   }

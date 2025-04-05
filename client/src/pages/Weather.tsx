@@ -12,15 +12,15 @@ import { useLocation } from "@/contexts/LocationContext";
 import { useWeather } from "@/hooks/use-weather";
 
 export default function Weather() {
-  const [location, setLocation] = useState("default");
+  const [selectedLocation, setSelectedLocation] = useState("default");
   const { location: userLocation, requestLocationPermission } = useLocation();
   
   // Use user's location when available
   useEffect(() => {
-    if (userLocation && location === "default") {
-      setLocation(userLocation);
+    if (userLocation && selectedLocation === "default") {
+      setSelectedLocation(userLocation);
     }
-  }, [userLocation, location]);
+  }, [userLocation, selectedLocation]);
   
   // Request location permission when component mounts, if needed
   useEffect(() => {
@@ -31,8 +31,11 @@ export default function Weather() {
     }
   }, [requestLocationPermission]);
   
+  // Determine the actual location to use for weather fetching
+  const locationToUse = selectedLocation === "default" ? userLocation : selectedLocation;
+  
   // Use our weather hook to manage weather data
-  const { weatherData, isLoading: isLoadingWeather, error } = useWeather(location === "default" ? undefined : location);
+  const { weatherData, isLoading: isLoadingWeather, error } = useWeather(locationToUse);
   
   const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
     queryKey: ["/api/events"],
@@ -70,9 +73,9 @@ export default function Weather() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-neutral-900">Weather Forecast</h1>
-          <p className="text-neutral-500">{getLocationName(location)}</p>
+          <p className="text-neutral-500">{getLocationName(locationToUse)}</p>
         </div>
-        <Select value={location} onValueChange={setLocation}>
+        <Select value={selectedLocation} onValueChange={setSelectedLocation}>
           <SelectTrigger className="w-52">
             <SelectValue placeholder="Select location" />
           </SelectTrigger>
@@ -147,7 +150,11 @@ export default function Weather() {
       {/* 7-day forecast */}
       <div className="mb-8">
         <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">7-Day Forecast</h2>
-        <WeatherRow forecasts={weatherData} isLoading={isLoadingWeather} />
+        <WeatherRow 
+          forecasts={weatherData} 
+          isLoading={isLoadingWeather}
+          location={locationToUse}
+        />
       </div>
       
       {/* Weather-dependent events */}

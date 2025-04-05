@@ -12,6 +12,7 @@ import { Project } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { getAiSuggestion } from "@/lib/openAiApi";
+import { getProjectColor } from "@/lib/colorUtils";
 
 interface EventModalProps {
   isOpen: boolean;
@@ -79,26 +80,98 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     }
   }, [isOpen, selectedDate, projects]);
 
-  const createEventMutation = useMutation({
+  // Add useEffect to load event data when editEventId is provided
+  useEffect(() => {
+    // Only fetch if we have an event ID and the modal is open
+    if (editEventId && isOpen) {
+      const fetchEvent = async () => {
+        try {
+          const response = await apiRequest("GET", `/api/events/${editEventId}`);
+          if (!response.ok) {
+            throw new Error("Failed to fetch event");
+          }
+          
+          const eventData = await response.json();
+          
+          // Populate form with event data
+          setTitle(eventData.title || "");
+          setDescription(eventData.description || "");
+          setLocation(eventData.location || "");
+          setCheckWeather(eventData.checkWeather || false);
+          setIsRecurring(eventData.isRecurring || false);
+          
+          if (eventData.projectId) {
+            setProjectId(String(eventData.projectId));
+          }
+          
+          // Format dates and times
+          if (eventData.startDate) {
+            const startDateTime = new Date(eventData.startDate);
+            setStartDate(formatDate(startDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+            setStartTime(formatTimeForInput(startDateTime));
+          }
+          
+          if (eventData.endDate) {
+            const endDateTime = new Date(eventData.endDate);
+            setEndDate(formatDate(endDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+            setEndTime(formatTimeForInput(endDateTime));
+          }
+          
+          // Handle recurring pattern if available
+          if (eventData.recurringPattern) {
+            setRecurrenceType(eventData.recurringPattern.frequency || "day");
+            setRecurrenceInterval(eventData.recurringPattern.interval || 1);
+            
+            if (eventData.recurringPattern.endDate) {
+              const recurrenceEnd = new Date(eventData.recurringPattern.endDate);
+              setRecurrenceEndDate(formatDate(recurrenceEnd, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching event:", error);
+          toast({
+            title: "Error",
+            description: "Failed to load event details.",
+            variant: "destructive",
+          });
+        }
+      };
+      
+      fetchEvent();
+    }
+  }, [editEventId, isOpen, toast]);
+
+  // Modify the createEventMutation to handle both create and update
+  const eventMutation = useMutation({
     mutationFn: async (eventData: any) => {
-      const response = await apiRequest("POST", "/api/events", eventData);
-      return response.json();
+      // If we have an editEventId, update the existing event
+      if (editEventId) {
+        const response = await apiRequest("PUT", `/api/events/${editEventId}`, eventData);
+        return response.json();
+      } 
+      // Otherwise create a new event
+      else {
+        const response = await apiRequest("POST", "/api/events", eventData);
+        return response.json();
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/events"] });
       toast({
-        title: "Event created",
-        description: "The event has been successfully created.",
+        title: editEventId ? "Event updated" : "Event created",
+        description: editEventId 
+          ? "The event has been successfully updated." 
+          : "The event has been successfully created.",
       });
       onClose();
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: "There was an error creating the event. Please try again.",
+        description: `There was an error ${editEventId ? "updating" : "creating"} the event. Please try again.`,
         variant: "destructive",
       });
-      console.error("Error creating event:", error);
+      console.error(`Error ${editEventId ? "updating" : "creating"} event:`, error);
     },
   });
 
@@ -108,8 +181,15 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     return `${hours}:${minutes}`;
   };
 
+  // Modify the handleSubmit to prevent duplicate submissions
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate submissions
+    if (eventMutation.isPending) {
+      console.log("Submission already in progress, preventing duplicate");
+      return;
+    }
     
     // Validate form
     if (!title) {
@@ -168,8 +248,10 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
       recurringPattern
     };
     
-    // Submit data
-    createEventMutation.mutate(eventData);
+    console.log(`Creating event with data:`, eventData);
+    
+    // Submit data using the renamed mutation
+    eventMutation.mutate(eventData);
   };
 
   const handleAskAi = async () => {
@@ -294,7 +376,7 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
         
         // Submit the event
         try {
-          await createEventMutation.mutateAsync(eventData);
+          await eventMutation.mutateAsync(eventData);
         } catch (error) {
           console.error("Error creating event:", error);
         }
@@ -318,13 +400,25 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     }
   };
 
+  // Get the currently selected project and its color
+  const selectedProject = projects.find(p => p.id === parseInt(projectId));
+  const projectColor = selectedProject ? getProjectColor(selectedProject) : null;
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg font-medium text-neutral-900">
-            {editEventId ? "Edit Event" : "Add New Event"}
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-lg font-medium text-neutral-900">
+              {editEventId ? "Edit Event" : "Add New Event"}
+            </DialogTitle>
+            {projectColor && (
+              <div className="flex items-center">
+                <div className={`w-3 h-3 rounded-full ${projectColor.bg}`}></div>
+                <span className={`text-sm ${projectColor.lightText}`}>{selectedProject?.name}</span>
+              </div>
+            )}
+          </div>
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -390,15 +484,25 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
               value={projectId} 
               onValueChange={setProjectId}
             >
-              <SelectTrigger className="w-full mt-1">
+              <SelectTrigger className={`w-full mt-1 ${projectColor ? `border-l-4 ${projectColor.border}` : ''}`}>
                 <SelectValue placeholder="Select a project" />
               </SelectTrigger>
               <SelectContent>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={String(project.id)}>
-                    {project.name}
-                  </SelectItem>
-                ))}
+                {projects.map((project) => {
+                  const projectColor = getProjectColor(project);
+                  return (
+                    <SelectItem 
+                      key={project.id} 
+                      value={String(project.id)}
+                      className="flex items-center"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${projectColor.bg}`}></div>
+                        <span>{project.name}</span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
                 <SelectItem value="new">+ Create New Project</SelectItem>
               </SelectContent>
             </Select>
@@ -538,9 +642,9 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
             <Button 
               type="submit" 
               className="bg-primary hover:bg-primary-dark w-full"
-              disabled={createEventMutation.isPending}
+              disabled={eventMutation.isPending}
             >
-              {createEventMutation.isPending ? "Creating..." : "Create Event"}
+              {eventMutation.isPending ? "Creating..." : "Create Event"}
             </Button>
           </div>
         </form>

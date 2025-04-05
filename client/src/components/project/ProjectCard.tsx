@@ -1,6 +1,6 @@
 import { Project } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { getProjectColor, getStatusColor } from "@/lib/colorUtils";
 
 interface ProjectCardProps {
   project: Project;
@@ -8,13 +8,14 @@ interface ProjectCardProps {
 }
 
 export default function ProjectCard({ project, onSelect }: ProjectCardProps) {
-  const { name, description, status, startDate, endDate, progress } = project;
+  const { id, name, description, status, startDate, endDate, progress } = project;
+  const projectColor = getProjectColor(project);
   
   // Format date range
   const formatDateRange = () => {
     if (!startDate && !endDate) return "No dates specified";
     
-    if (!startDate) return `Until ${new Date(endDate).toLocaleDateString()}`;
+    if (!startDate) return `Until ${new Date(endDate!).toLocaleDateString()}`;
     
     if (!endDate) return `From ${new Date(startDate).toLocaleDateString()}`;
     
@@ -30,26 +31,57 @@ export default function ProjectCard({ project, onSelect }: ProjectCardProps) {
   };
   
   // Get status badge style
-  const getStatusBadge = () => {
-    switch (status) {
-      case "active":
-        return "bg-green-100 text-green-800";
-      case "planning":
-        return "bg-blue-100 text-blue-800";
-      case "completed":
-        return "bg-purple-100 text-purple-800";
-      case "ongoing":
-        return "bg-yellow-100 text-yellow-800";
-      default:
-        return "bg-neutral-100 text-neutral-800";
+  const getStatusBadge = () => getStatusColor(status);
+
+  // Extract hex color from Tailwind class with square brackets
+  const extractHexColor = (className: string): string | undefined => {
+    if (className.includes('[') && className.includes(']')) {
+      const start = className.indexOf('[') + 1;
+      const end = className.indexOf(']');
+      return className.substring(start, end);
     }
+    return undefined;
+  };
+
+  // Get color styles based on the project color
+  const colorStyles = {
+    topBar: projectColor.bg.includes('[') 
+      ? { backgroundColor: extractHexColor(projectColor.bg) } 
+      : {},
+    border: projectColor.border.includes('[') 
+      ? { borderColor: extractHexColor(projectColor.border) } 
+      : {},
+    text: projectColor.lightText.includes('[') 
+      ? { color: extractHexColor(projectColor.lightText) } 
+      : {},
+    progressBar: projectColor.bg.includes('[') 
+      ? { backgroundColor: extractHexColor(projectColor.bg) } 
+      : {}
   };
 
   return (
-    <Card className="shadow hover:shadow-md transition cursor-pointer" onClick={onSelect}>
-      <CardContent className="p-4">
+    <Card 
+      className="shadow hover:shadow-md transition cursor-pointer overflow-hidden border-0" 
+      onClick={onSelect}
+    >
+      {/* Project color bar */}
+      <div 
+        className={`h-2 w-full ${!projectColor.bg.includes('[') ? projectColor.bg : ''}`}
+        style={colorStyles.topBar}
+      ></div>
+      
+      {/* Card content */}
+      <CardContent 
+        className={`p-4 border-l-4 ${!projectColor.border.includes('[') ? projectColor.border : ''}`}
+        style={colorStyles.border}
+      >
         <div className="flex justify-between items-start">
-          <h3 className="font-medium text-neutral-800">{name}</h3>
+          <h3 
+            className={`font-medium ${!projectColor.lightText.includes('[') ? projectColor.lightText : ''}`}
+            style={colorStyles.text}
+          >
+            {name}
+          </h3>
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadge()}`}>
             {status.charAt(0).toUpperCase() + status.slice(1)}
           </span>
@@ -70,17 +102,31 @@ export default function ProjectCard({ project, onSelect }: ProjectCardProps) {
           <div className="relative pt-1">
             <div className="flex mb-2 items-center justify-between">
               <div>
-                <span className="text-xs font-semibold inline-block text-primary">
+                <span 
+                  className={`text-xs font-semibold inline-block ${!projectColor.lightText.includes('[') ? projectColor.lightText : ''}`}
+                  style={colorStyles.text}
+                >
                   Progress
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-xs font-semibold inline-block text-primary">
+                <span 
+                  className={`text-xs font-semibold inline-block ${!projectColor.lightText.includes('[') ? projectColor.lightText : ''}`}
+                  style={colorStyles.text}
+                >
                   {progress}%
                 </span>
               </div>
             </div>
-            <Progress value={progress} className="h-2" />
+            <div className="h-2 w-full rounded-full bg-neutral-200 overflow-hidden">
+              <div 
+                className={`h-full ${!projectColor.bg.includes('[') ? projectColor.bg : ''}`} 
+                style={{
+                  width: `${progress || 0}%`,
+                  ...colorStyles.progressBar
+                }}
+              ></div>
+            </div>
           </div>
         </div>
       </CardContent>

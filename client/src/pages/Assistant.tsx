@@ -191,7 +191,7 @@ export default function Assistant() {
           <h2 className="font-medium">Farm Friend</h2>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
           {isLoadingActiveConversation ? (
             <div className="space-y-4">
               <div className="flex items-start">
@@ -222,17 +222,17 @@ export default function Assistant() {
                     </div>
                   )}
                   
-                  <div className={`mx-2 rounded-lg p-3 max-w-[75%] ${
+                  <div className={`mx-2 rounded-lg p-3 max-w-[75%] shadow-sm ${
                     message.role === "user" 
                       ? "bg-primary text-white" 
-                      : "bg-neutral-100"
+                      : "bg-white border border-gray-200"
                   }`}>
                     {message.role === "user" ? (
                       <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                     ) : (
                       <MarkdownRenderer 
                         content={message.content} 
-                        className="text-sm text-foreground"
+                        className={`text-sm ${message.role === "assistant" ? "text-neutral-800" : "text-white"}`}
                       />
                     )}
                   </div>
@@ -250,7 +250,7 @@ export default function Assistant() {
                   <div className="flex-shrink-0 bg-primary rounded-full h-8 w-8 flex items-center justify-center text-white text-sm">
                     AI
                   </div>
-                  <div className="ml-2 bg-neutral-100 rounded-lg p-3">
+                  <div className="ml-2 bg-white rounded-lg p-3 shadow-sm border border-gray-200">
                     <div className="flex space-x-1">
                       <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"></div>
                       <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce delay-75"></div>
@@ -265,12 +265,12 @@ export default function Assistant() {
           )}
         </div>
         
-        <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200">
+        <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200 bg-white">
           <div className="flex space-x-2">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
+              placeholder="Type your message... (Markdown supported)"
               className="flex-1 py-2 px-4 border border-neutral-300 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               disabled={isLoadingResponse || isLoadingActiveConversation || !activeConversationId}
             />
