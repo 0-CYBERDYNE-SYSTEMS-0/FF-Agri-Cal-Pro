@@ -894,7 +894,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         try {
           // Fallback to gpt-4o
           response = await openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gpt-4.1",
             messages: apiMessages,
             temperature: 0.7,
             max_tokens: 500,
@@ -905,7 +905,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           console.warn("gpt-4o model error, falling back to gpt-3.5-turbo:", fallbackErrorMessage);
           // Final fallback to gpt-3.5-turbo
           response = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
+            model: "gpt-4.1-mini",
             messages: apiMessages,
             temperature: 0.7,
             max_tokens: 500,

@@ -220,22 +220,24 @@ export default function ChatInterface() {
       const eventCreationMention = lastAiMessage.content.match(/I('ve| have) scheduled|calendar event scheduled|event has been added|added to your calendar|has been successfully scheduled|been scheduled for/i);
       
       if (eventCreationMention) {
-        // Try to automatically create the event from the message
+        // Fallback: try to extract and create event from claim
         createEventFromAssistantClaim(lastAiMessage.content)
-          .then(success => {
+          .then((success) => {
             if (success) {
-              // Show success toast
               toast({
                 title: "Calendar Event Created",
-                description: "The assistant scheduled an event for you automatically.",
+                description: "Event created from assistant claim.",
               });
-              
-              // Update calendar data
               queryClient.invalidateQueries({ queryKey: ["/api/events"] });
             }
           })
-          .catch(err => {
-            console.error("Error handling assistant event claim:", err);
+          .catch((err) => {
+            console.error("Error creating event from assistant claim:", err);
+            toast({
+              title: "Error",
+              description: "Failed to create calendar event from assistant claim.",
+              variant: "destructive"
+            });
           });
       }
     }
