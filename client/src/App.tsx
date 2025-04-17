@@ -1,5 +1,5 @@
 import { Switch, Route } from "wouter";
-import NotFound from "@/pages/not-found";
+import NotFound from "@/pages/not-found.tsx";
 import Calendar from "@/pages/Calendar";
 import Projects from "@/pages/Projects";
 import Assistant from "@/pages/Assistant";
