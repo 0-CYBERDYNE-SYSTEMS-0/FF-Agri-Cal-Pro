@@ -15,7 +15,7 @@ function getSeasonForDate(date: Date): string {
   const month = date.getMonth();
   const day = date.getDate();
   const northernHemisphere = true; // Default to northern hemisphere
-  
+
   // Adjust seasons based on hemisphere
   if (northernHemisphere) {
     if ((month === 11 && day >= 21) || month < 2 || (month === 2 && day <= 20)) {
@@ -45,12 +45,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
   const handleApiError = (err: any, res: Response) => {
     console.error("API Error:", err);
-    
+
     if (err instanceof ZodError) {
       const validationError = fromZodError(err);
       return res.status(400).json({ message: validationError.message });
     }
-    
+
     return res.status(500).json({ message: err.message || "Internal Server Error" });
   };
 
@@ -59,15 +59,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userData = insertUserSchema.parse(req.body);
       const existingUser = await storage.getUserByUsername(userData.username);
-      
+
       if (existingUser) {
         return res.status(409).json({ message: "Username already exists" });
       }
-      
+
       const user = await storage.createUser(userData);
       // Don't return password in response
       const { password, ...userResponse } = user;
-      
+
       return res.status(201).json(userResponse);
     } catch (err) {
       return handleApiError(err, res);
@@ -82,14 +82,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }).parse(req.body);
 
       const user = await storage.getUserByUsername(username);
-      
+
       if (!user || user.password !== password) {
         return res.status(401).json({ message: "Invalid username or password" });
       }
-      
+
       // Don't return password in response
       const { password: _, ...userResponse } = user;
-      
+
       return res.status(200).json(userResponse);
     } catch (err) {
       return handleApiError(err, res);
@@ -100,14 +100,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // For demo purposes, we'll return the first user
       const user = await storage.getUser(1);
-      
+
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      
+
       // Don't return password in response
       const { password, ...userResponse } = user;
-      
+
       return res.status(200).json(userResponse);
     } catch (err) {
       return handleApiError(err, res);
@@ -130,11 +130,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const project = await storage.getProject(id);
-      
+
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
-      
+
       return res.status(200).json(project);
     } catch (err) {
       return handleApiError(err, res);
@@ -157,11 +157,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const project = await storage.getProject(id);
-      
+
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
-      
+
       const updatedProject = await storage.updateProject(id, req.body);
       return res.status(200).json(updatedProject);
     } catch (err) {
@@ -173,11 +173,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const project = await storage.getProject(id);
-      
+
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
-      
+
       await storage.deleteProject(id);
       return res.status(204).end();
     } catch (err) {
@@ -190,27 +190,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      
+
       // If startDate and endDate are provided, filter events by date range
       if (req.query.startDate && req.query.endDate) {
         const startDate = new Date(req.query.startDate as string);
         const endDate = new Date(req.query.endDate as string);
-        
+
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
           return res.status(400).json({ message: "Invalid date format" });
         }
-        
+
         const events = await storage.getEventsByDateRange(userId, startDate, endDate);
         return res.status(200).json(events);
       }
-      
+
       // If projectId is provided, filter events by project
       if (req.query.projectId) {
         const projectId = parseInt(req.query.projectId as string);
         const events = await storage.getEventsByProject(projectId);
         return res.status(200).json(events);
       }
-      
+
       // Otherwise, get all events for the user
       const events = await storage.getEventsByUser(userId);
       return res.status(200).json(events);
@@ -223,11 +223,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const event = await storage.getEvent(id);
-      
+
       if (!event) {
         return res.status(404).json({ message: "Event not found" });
       }
-      
+
       return res.status(200).json(event);
     } catch (err) {
       return handleApiError(err, res);
@@ -238,10 +238,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      
+
       // Handle both string and Date objects for dates
       const { startDate, endDate, ...restBody } = req.body;
-      
+
       // Convert dates if they're strings
       const parsedData = {
         ...restBody,
@@ -249,7 +249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
         endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
       };
-      
+
       // Now parse with the schema
       const eventData = insertEventSchema.parse(parsedData);
       const event = await storage.createEvent(eventData);
@@ -263,11 +263,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const event = await storage.getEvent(id);
-      
+
       if (!event) {
         return res.status(404).json({ message: "Event not found" });
       }
-      
+
       const updatedEvent = await storage.updateEvent(id, req.body);
       return res.status(200).json(updatedEvent);
     } catch (err) {
@@ -279,11 +279,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const event = await storage.getEvent(id);
-      
+
       if (!event) {
         return res.status(404).json({ message: "Event not found" });
       }
-      
+
       await storage.deleteEvent(id);
       return res.status(204).end();
     } catch (err) {
@@ -296,14 +296,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Get location from query params or use default
       const location = (req.query.location as string) || "New York";
-      
+
       // Get real weather data from OpenWeather API
       const weatherData = await getWeatherInfo(location);
-      
+
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
-      
+
       // Convert the API response to our WeatherForecast format for consistency
       const forecast = [
         // Today's forecast
@@ -321,7 +321,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...weatherData.forecast.slice(0, 6).map((day, i) => {
           const date = new Date();
           date.setDate(date.getDate() + i + 1);
-          
+
           return {
             date: day.date,
             dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(day.date).getDay()],
@@ -334,14 +334,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         })
       ];
-      
+
       return res.status(200).json(forecast);
     } catch (err) {
       console.error("Error fetching weather data:", err);
       return handleApiError(err, res);
     }
   });
-  
+
 // Helper function to convert OpenWeather icon codes to emoji
 function weatherIconToEmoji(iconCode: string): string {
   const iconMap: {[key: string]: string} = {
@@ -364,10 +364,10 @@ function weatherIconToEmoji(iconCode: string): string {
     '50d': '🌫️', // mist
     '50n': '🌫️'
   };
-  
+
   return iconMap[iconCode] || '🌤️';
 }
-  
+
   // Real-time weather data API for the AI assistant
   app.get("/api/weather-data", async (req: Request, res: Response) => {
     try {
@@ -375,19 +375,19 @@ function weatherIconToEmoji(iconCode: string): string {
       if (req.query.lat && req.query.lon) {
         const lat = parseFloat(req.query.lat as string);
         const lon = parseFloat(req.query.lon as string);
-        
+
         if (isNaN(lat) || isNaN(lon)) {
           return res.status(400).json({ message: "Invalid coordinates" });
         }
-        
+
         try {
           // Get weather data which includes location name
           const weatherData = await getCurrentWeather(lat, lon);
-          
+
           if (!weatherData) {
             return res.status(404).json({ message: "Could not retrieve location data" });
           }
-          
+
           return res.status(200).json({ 
             location: weatherData.name + (weatherData.sys?.country ? `, ${weatherData.sys.country}` : ""),
             weather: weatherData 
@@ -397,55 +397,55 @@ function weatherIconToEmoji(iconCode: string): string {
           return res.status(500).json({ message: "Error retrieving location from coordinates" });
         }
       }
-      
+
       // Standard weather data request
       const location = (req.query.location as string);
-      
+
       if (!location) {
         return res.status(400).json({ message: "Location parameter is required" });
       }
-      
+
       const weatherData = await getWeatherInfo(location);
-      
+
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
-      
+
       return res.status(200).json(weatherData);
     } catch (err) {
       return handleApiError(err, res);
     }
   });
-  
+
   // Agricultural weather recommendations API
   app.get("/api/agri-weather-recommendations", async (req: Request, res: Response) => {
     try {
       const location = (req.query.location as string);
-      
+
       if (!location) {
         return res.status(400).json({ message: "Location parameter is required" });
       }
-      
+
       const weatherData = await getWeatherInfo(location);
-      
+
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
-      
+
       const recommendations = getAgricultureRecommendations(weatherData);
       return res.status(200).json({ recommendations });
     } catch (err) {
       return handleApiError(err, res);
     }
   });
-  
+
   // Web search route
   app.post("/api/search", async (req: Request, res: Response) => {
     try {
       const { query } = z.object({
         query: z.string()
       }).parse(req.body);
-      
+
       const searchResults = await searchWeb({ query });
       return res.status(200).json({ results: searchResults });
     } catch (err) {
@@ -469,11 +469,11 @@ function weatherIconToEmoji(iconCode: string): string {
     try {
       const id = parseInt(req.params.id);
       const conversation = await storage.getConversation(id);
-      
+
       if (!conversation) {
         return res.status(404).json({ message: "Conversation not found" });
       }
-      
+
       return res.status(200).json(conversation);
     } catch (err) {
       return handleApiError(err, res);
@@ -484,10 +484,10 @@ function weatherIconToEmoji(iconCode: string): string {
     try {
       // For demo purposes, we'll use user 1
       const userId = 1;
-      
+
       // If no messages are provided, add a weather-aware agricultural greeting
       let messages = req.body.messages || [];
-      
+
       // Define message interface
       interface ConversationMessage {
         role: string;
@@ -495,21 +495,21 @@ function weatherIconToEmoji(iconCode: string): string {
         tool_calls?: any[];
         tool_call_id?: string;
       }
-      
+
       if (messages.length === 0 || (messages.length === 1 && messages[0].role === "system")) {
         // Get default location
         const userLocation = "New York, USA"; // Default location - in real app would be user's actual location
-        
+
         // Get weather data
         const weatherData = await getWeatherInfo(userLocation);
-        
+
         // Determine current season
         const now = new Date();
         const currentSeason = getSeasonForDate(now);
-        
+
         // Generate appropriate seasonal greeting
         let seasonalActivities = "";
-        
+
         switch(currentSeason) {
           case "Spring":
             seasonalActivities = "soil preparation, early crop planting, and equipment maintenance";
@@ -524,16 +524,16 @@ function weatherIconToEmoji(iconCode: string): string {
             seasonalActivities = "crop planning, equipment repairs, and seed ordering";
             break;
         }
-        
+
         // Create assistant greeting
         const weatherInfo = weatherData ? 
           `The current weather in ${userLocation} is ${weatherData.current.temp}°F with ${weatherData.current.weather_description}. ` : 
           "";
-          
+
         const greeting = `Hello! I'm your Farm Friend agricultural assistant. ${weatherInfo}We're currently in ${currentSeason}, which is typically the time for ${seasonalActivities} in your region.
 
 How can I help with your agricultural planning today?`;
-        
+
         // Add assistant message if not already present
         if (!messages.some((msg: ConversationMessage) => msg.role === "assistant")) {
           messages.push({
@@ -542,7 +542,7 @@ How can I help with your agricultural planning today?`;
           });
         }
       }
-      
+
       const conversationData = insertConversationSchema.parse({ messages, userId });
       const conversation = await storage.createConversation(conversationData);
       return res.status(201).json(conversation);
@@ -555,31 +555,31 @@ How can I help with your agricultural planning today?`;
     try {
       const id = parseInt(req.params.id);
       const conversation = await storage.getConversation(id);
-      
+
       if (!conversation) {
         return res.status(404).json({ message: "Conversation not found" });
       }
-      
+
       const { message } = z.object({
         message: z.string()
       }).parse(req.body);
-      
+
       // Add user message
       const updatedMessages = [
         ...(Array.isArray(conversation.messages) ? conversation.messages : []),
         { role: "user", content: message }
       ];
-      
+
       // Get AI response from OpenAI API
       const OpenAI = await import("openai");
       const openai = new OpenAI.default({
         apiKey: process.env.OPENAI_API_KEY
       });
-      
+
       // Get location data for context from request headers or use default
       const userAgent = req.headers['user-agent'] || '';
       let userLocation = 'Unknown Location';
-      
+
       // Try to get location from query or cookies, or use default
       if (req.query.location) {
         userLocation = req.query.location as string;
@@ -589,21 +589,21 @@ How can I help with your agricultural planning today?`;
         // Default location if not provided
         userLocation = 'New York, USA';
       }
-      
+
       // Get real weather data and context directly instead of going through the API
       // This avoids port issues and is more efficient
-      
+
       // Get weather data
       const weatherData = await getWeatherInfo(userLocation);
-      
+
       // Get user's calendar events (using default user ID 1)
       const userId = 1;
       const userEvents = await storage.getEventsByUser(userId);
-      
+
       // Determine current season
       const now = new Date();
       const currentSeason = getSeasonForDate(now);
-      
+
       // Build context data directly - similar structure to the /api/assistant/context endpoint
       const contextData = {
         timestamp: now.toISOString(),
@@ -630,10 +630,10 @@ How can I help with your agricultural planning today?`;
           isWeatherDependent: event.checkWeather
         }))
       };
-      
+
       // Prepare messages for API
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
-      
+
 Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
 Current season: ${contextData.season}
 User location: ${contextData.location}
@@ -678,13 +678,13 @@ For calendar events:
 5. Set a location when relevant
 
 Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
-      
+
       // Add system message and user's message
       const apiMessages = [
         { role: "system", content: systemMessage },
         ...updatedMessages
       ];
-      
+
       // Define tools for web search and weather data
       const tools = [
         {
@@ -875,7 +875,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           }
         }
       ];
-      
+
       // Call OpenAI API with model fallback
       let response;
       try {
@@ -913,13 +913,13 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           });
         }
       }
-      
+
       // Handle function calling if the model calls a tool
       if (response.choices[0].message.tool_calls && response.choices[0].message.tool_calls.length > 0) {
         const toolCall = response.choices[0].message.tool_calls[0];
         const functionName = toolCall.function.name;
         const functionArgs = JSON.parse(toolCall.function.arguments);
-        
+
         // Add the assistant's tool call message to the conversation
         updatedMessages.push({
           role: "assistant",
@@ -940,40 +940,40 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
             }
           }]
         });
-        
+
         let toolResponse = "";
-        
+
         // Handle different tool types
         if (functionName === "search_web") {
           const searchQuery = functionArgs.query;
           console.log("Performing web search for query:", searchQuery);
-          
+
           // Add a visible message to the user about the search
           updatedMessages.push({
             role: "assistant",
             content: `I'll search for information about: ${searchQuery}`
           });
-          
+
           // Execute the web search
           toolResponse = await searchWeb({ query: searchQuery });
-          
+
         } else if (functionName === "get_weather") {
           const location = functionArgs.location;
           console.log("Getting weather data for location:", location);
-          
+
           // Add a visible message to the user about getting weather
           updatedMessages.push({
             role: "assistant",
             content: `I'll check the current weather and forecast for ${location}`
           });
-          
+
           // Get weather data
           const weatherData = await getWeatherInfo(location);
-          
+
           if (weatherData) {
             // Get agricultural recommendations based on weather
             const recommendations = getAgricultureRecommendations(weatherData);
-            
+
             // Combine weather data and recommendations
             toolResponse = JSON.stringify({
               weather: weatherData,
@@ -985,7 +985,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         } else if (functionName === "create_calendar_event") {
           const eventData = functionArgs;
           console.log("Creating calendar event from assistant:", eventData);
-          
+
           // Validate the event data
           const validatedEvent = insertEventSchema.parse({
             ...eventData,
@@ -993,10 +993,10 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
             endDate: new Date(eventData.endDate),
             userId: 1, // Default user ID
           });
-          
+
           // Insert the event using the storage interface
           const newEvent = await storage.createEvent(validatedEvent);
-          
+
           toolResponse = JSON.stringify({
             success: true,
             event: newEvent
@@ -1004,37 +1004,37 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         } else if (functionName === "update_calendar_event") {
           const eventData = functionArgs;
           console.log("Updating calendar event from assistant:", eventData);
-          
+
           // Validate the event data
           const validatedEvent = insertEventSchema.parse({
             ...eventData,
             userId: 1, // Default user ID
           });
-          
+
           // Update the event using the storage interface
           const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
-          
+
           toolResponse = JSON.stringify({
             success: true,
             event: updatedEvent
           });
         } else if (functionName === "delete_calendar_event") {
           console.log("Deleting calendar event from assistant:", functionArgs.eventId);
-          
+
           // Delete the event using the storage interface
           await storage.deleteEvent(functionArgs.eventId);
-          
+
           toolResponse = JSON.stringify({
             success: true,
             message: "Event deleted successfully"
           });
         } else if (functionName === "search_calendar_events") {
           console.log("Searching calendar events:", functionArgs);
-          
+
           // Default to user 1 for demo
           const userId = 1;
           let events = [];
-          
+
           // If we have a date range, use that for searching
           if (functionArgs.startDate && functionArgs.endDate) {
             const startDate = new Date(functionArgs.startDate);
@@ -1049,7 +1049,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           else {
             events = await storage.getEventsByUser(userId);
           }
-          
+
           // If we have a keyword, filter the results
           if (functionArgs.keyword && events.length > 0) {
             const keyword = functionArgs.keyword.toLowerCase();
@@ -1058,7 +1058,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               (event.description && event.description.toLowerCase().includes(keyword))
             );
           }
-          
+
           toolResponse = JSON.stringify({
             success: true,
             events: events
@@ -1066,15 +1066,15 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         } else if (functionName === "get_or_create_project") {
           const projectData = functionArgs;
           console.log("Getting or creating project from assistant:", projectData.name);
-          
+
           // Get all projects for user 1
           const allProjects = await storage.getProjectsByUser(1);
-          
+
           // Check if project already exists
           const existingProject = allProjects.find(project => 
             project.name.toLowerCase() === projectData.name.toLowerCase()
           );
-          
+
           if (existingProject) {
             toolResponse = JSON.stringify({
               success: true,
@@ -1091,7 +1091,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               endDate: null,
               userId: 1 // Default user ID
             });
-            
+
             toolResponse = JSON.stringify({
               success: true,
               project: newProject,
@@ -1099,34 +1099,42 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
             });
           }
         }
-        
+
         // Add the tool response to messages array
-        (apiMessages as any).push({
+        updatedMessages.push({
           role: "tool",
           content: toolResponse,
           tool_call_id: toolCall.id
         });
-        
+
+        // Add tool message to API messages
+        apiMessages.push({
+          role: "tool",
+          content: toolResponse,
+          tool_call_id: toolCall.id
+        });
+
         // Get a second response from the model with the tool results
         const secondResponse = await openai.chat.completions.create({
           model: "gpt-4o", // Use gpt-4o for handling tool results (more reliable)
           messages: apiMessages,
           temperature: 0.7,
-          max_tokens: 800
+          max_tokens: 800,
+          tools: tools // Keep providing tools for follow-up responses
         });
-        
+
         // Get the AI response that incorporates the tool results
         const aiResponse = secondResponse.choices[0].message.content || "I'm sorry, I couldn't process your request.";
-        
+
         // Add the final AI response to conversation
         updatedMessages.push({ role: "assistant", content: aiResponse });
-        
+
       } else {
         // Handle normal non-function response
         const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
         updatedMessages.push({ role: "assistant", content: aiResponse });
       }
-      
+
       const updatedConversation = await storage.updateConversation(id, updatedMessages);
       return res.status(200).json(updatedConversation);
     } catch (err) {
@@ -1140,10 +1148,10 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     try {
       // Demo user id = 1 for simplicity (in this demo app we auto-login as demo user)
       const userId = 1;
-      
+
       // Get all events for the user
       const userEvents = await storage.getEventsByUser(userId);
-      
+
       // Convert to ICS format
       const icsContent = [
         'BEGIN:VCALENDAR',
@@ -1152,16 +1160,16 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         'CALSCALE:GREGORIAN',
         'METHOD:PUBLISH'
       ];
-      
+
       userEvents.forEach(event => {
         const startDate = new Date(event.startDate);
         const endDate = new Date(event.endDate);
-        
+
         // Format dates as YYYYMMDDTHHMMSSZ
         const formatICSDate = (date: Date) => {
           return date.toISOString().replace(/-|:|\.\d+/g, '').slice(0, 15) + 'Z';
         };
-        
+
         const eventBlock = [
           'BEGIN:VEVENT',
           `UID:${event.id}@agriplanner.com`,
@@ -1170,34 +1178,34 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           `DTEND:${formatICSDate(endDate)}`,
           `SUMMARY:${event.title}`,
         ];
-        
+
         if (event.description) {
           eventBlock.push(`DESCRIPTION:${event.description.replace(/\n/g, '\\n')}`);
         }
-        
+
         if (event.location) {
           eventBlock.push(`LOCATION:${event.location}`);
         }
-        
+
         // Add custom properties for Agri-Cal specific features
         if (event.checkWeather) {
           eventBlock.push('X-AGRICAL-CHECKWEATHER:TRUE');
         }
-        
+
         if (event.projectId) {
           eventBlock.push(`X-AGRICAL-PROJECTID:${event.projectId}`);
         }
-        
+
         eventBlock.push('END:VEVENT');
         icsContent.push(...eventBlock);
       });
-      
+
       icsContent.push('END:VCALENDAR');
-      
+
       // Set the response headers for an ICS file download
       res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename=farm-calendar.ics');
-      
+
       return res.status(200).send(icsContent.join('\r\n'));
     } catch (err) {
       console.error("Error generating ICS file:", err);
@@ -1211,20 +1219,20 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       // Get location from query params or use default
       const location = (req.query.location as string) || "New York";
       const userId = 1; // Default demo user
-      
+
       // Get weather data
       const weatherData = await getWeatherInfo(location);
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
-      
+
       // Get user's calendar events
       const userEvents = await storage.getEventsByUser(userId);
-      
+
       // Determine current season
       const currentDate = new Date();
       const currentSeason = getSeasonForDate(currentDate);
-      
+
       // Build context object
       const context = {
         timestamp: currentDate.toISOString(),
@@ -1251,7 +1259,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           isWeatherDependent: event.checkWeather
         }))
       };
-      
+
       return res.status(200).json(context);
     } catch (err) {
       console.error("Error fetching assistant context:", err);
@@ -1265,10 +1273,10 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     try {
       const eventData = req.body;
       console.log("Creating calendar event from assistant:", eventData);
-      
+
       // Handle both string and Date objects for dates
       const { startDate, endDate, ...restData } = eventData;
-      
+
       // Convert dates if they're strings
       const parsedData = {
         ...restData,
@@ -1276,13 +1284,13 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
         endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
       };
-      
+
       // Validate the event data
       const validatedEvent = insertEventSchema.parse(parsedData);
-      
+
       // Insert the event using the storage interface
       const newEvent = await storage.createEvent(validatedEvent);
-      
+
       return res.status(200).json({
         success: true,
         event: newEvent
@@ -1292,21 +1300,21 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       return handleApiError(err, res);
     }
   });
-  
+
   // Get or create a project
   app.post("/api/assistant/functions/get-or-create-project", async (req: Request, res: Response) => {
     try {
       const { name, description } = req.body;
       console.log("Getting or creating project from assistant:", name);
-      
+
       // Get all projects for user 1
       const allProjects = await storage.getProjectsByUser(1);
-      
+
       // Check if project already exists
       const existingProject = allProjects.find(project => 
         project.name.toLowerCase() === name.toLowerCase()
       );
-      
+
       if (existingProject) {
         return res.status(200).json({
           success: true,
@@ -1314,7 +1322,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           isNew: false
         });
       }
-      
+
       // Create new project using the storage interface
       const newProject = await storage.createProject({
         name,
@@ -1324,7 +1332,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         endDate: null,
         userId: 1 // Default user ID
       });
-      
+
       return res.status(200).json({
         success: true,
         project: newProject,
@@ -1341,14 +1349,14 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     try {
       const { events: eventsBatch } = req.body;
       console.log("Creating calendar events batch from assistant:", eventsBatch.length, "events");
-      
+
       const createdEvents = [];
-      
+
       // Process each event
       for (const eventData of eventsBatch) {
         // Handle both string and Date objects for dates
         const { startDate, endDate, ...restData } = eventData;
-        
+
         // Convert dates if they're strings
         const parsedData = {
           ...restData,
@@ -1356,15 +1364,15 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
           endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
         };
-        
+
         // Validate the event data
         const validatedEvent = insertEventSchema.parse(parsedData);
-        
+
         // Insert the event
         const newEvent = await storage.createEvent(validatedEvent);
         createdEvents.push(newEvent);
       }
-      
+
       return res.status(200).json({
         success: true,
         events: createdEvents
@@ -1387,7 +1395,7 @@ You can now also:
 
 For updating events, you need the event ID (which you can get from the context or by searching)
 For deleting events, you only need the event ID`;
-      
+
       return res.status(200).json({ success: true, message: "Assistant system message updated" });
     } catch (err) {
       console.error("Error updating assistant system message:", err);
