@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+This is an agricultural calendar app. It works like a basic calendar app user interface, but it has an artificial intelligence-ly-powered agent that is behind everything. It has weather and location data involved in all of its interactions. The agent can completely manipulate and interact with the calendar, edit, delete, add, update, any sort of event. It also looks at the weather and makes suggestions about potentially rearranging future events. And also does internet research and provides amazing guidance and step-by-step instructions and other supplemental information to be a full-skill consultant/assistant, and it puts that information in the notes sections of the events and schedules. It's capable of scheduling single events or many events or dozens of events at once, whatever it takes.
+
+It takes in natural language from the user and then it does the work. This is the type of application it is.

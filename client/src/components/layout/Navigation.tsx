@@ -39,6 +39,9 @@ export default function Navigation() {
         <NavLink href="/weather" active={location === "/weather"}>
           Weather
         </NavLink>
+        <NavLink href="/files" active={location === "/files"}>
+          Files
+        </NavLink>
       </nav>
     </div>
   );

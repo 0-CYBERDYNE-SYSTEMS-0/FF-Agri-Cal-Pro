@@ -18,8 +18,9 @@ import {
   createCalendarEvent
 } from "@/lib/calendarService";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { Download, Calendar, AlertCircle } from "lucide-react";
+import { Download, Calendar, AlertCircle, Info } from "lucide-react";
 import { useLocation } from "@/contexts/LocationContext";
+import { locationService } from "@/lib/locationService";
 
 interface Message {
   role: "user" | "assistant" | "system";
@@ -40,6 +41,10 @@ export default function ChatInterface() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [isProcessingEvents, setIsProcessingEvents] = useState(false);
   const [eventProjectName, setEventProjectName] = useState("");
+  
+  // Location-independent mode
+  const [locationIndependentMode, setLocationIndependentMode] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
   
   // Get existing conversation or create new one
   const { data: conversations = [], isLoading: isLoadingConversations } = useQuery<Conversation[]>({
@@ -62,26 +67,58 @@ export default function ChatInterface() {
   const messages: Message[] = activeConversation?.messages as Message[] || [];
   
   // Get the user's current location
-  const { location: userLocation, isLoading: isLoadingLocation, requestLocationPermission } = useLocation();
+  const { 
+    location: userLocation, 
+    isLoading: isLoadingLocation, 
+    requestLocationPermission,
+    validatedLocation,
+    confidence,
+    source,
+    locationChangeDetected
+  } = useLocation();
   
-  // Request location permission when chat is opened
+  // Initialize location-independent mode based on location availability
   useEffect(() => {
-    if (isOpen) {
-      // Only request if we don't already have a location
-      if (!userLocation || userLocation === "New York") {
-        requestLocationPermission();
+    const savedMode = localStorage.getItem("locationIndependentMode");
+    if (savedMode) {
+      setLocationIndependentMode(JSON.parse(savedMode));
+    } else {
+      // Auto-enable if no location available after initial load
+      const timer = setTimeout(() => {
+        if (!userLocation && !isLoadingLocation) {
+          setLocationIndependentMode(true);
+          setShowLocationModal(true);
+        }
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [userLocation, isLoadingLocation]);
+  
+  // Request location permission when chat is opened (only if not in independent mode)
+  useEffect(() => {
+    if (isOpen && !locationIndependentMode) {
+      // Only request if we don't already have a location and haven't requested before
+      if (!userLocation) {
+        const locationRequested = localStorage.getItem("locationRequested");
+        if (!locationRequested) {
+          requestLocationPermission();
+        }
       }
     }
-  }, [isOpen, userLocation, requestLocationPermission]);
+  }, [isOpen, userLocation, requestLocationPermission, locationIndependentMode]);
   
   // Create conversation mutation
   const createConversationMutation = useMutation({
     mutationFn: async () => {
+      const greeting = locationIndependentMode ? 
+        "Hello! I'm your agricultural planning assistant. I'm running in location-independent mode, so I'll provide general agricultural advice and help you plan farming activities without location-specific weather data. How can I help you today?" :
+        "Hello! I'm your agricultural planning assistant. How can I help you today? I can help you plan your farming activities, create a calendar of events, or provide information on best practices for your crops based on your location and current weather conditions.";
+        
       const response = await apiRequest("POST", "/api/conversations", {
         messages: [
           {
             role: "assistant",
-            content: "Hello! I'm your agricultural planning assistant. How can I help you today? I can help you plan your farming activities, create a calendar of events, or provide information on best practices for your crops based on your location and current weather conditions."
+            content: greeting
           }
         ]
       });
@@ -104,7 +141,13 @@ export default function ChatInterface() {
   // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: async ({ conversationId, message }: { conversationId: number, message: string }) => {
-      const response = await apiRequest("POST", `/api/conversations/${conversationId}/messages`, { message });
+      // Handle location-independent mode
+      const locationToSend = locationIndependentMode ? null : userLocation;
+      
+      const response = await apiRequest("POST", `/api/conversations/${conversationId}/messages`, { 
+        message,
+        location: locationToSend // Include user's location only if not in independent mode
+      });
       return response.json();
     },
     onSuccess: (data) => {
@@ -254,13 +297,16 @@ export default function ChatInterface() {
   const { data: contextData, isLoading: isLoadingContext } = useQuery({
     queryKey: ["/api/assistant/context", locationToUse],
     queryFn: async () => {
-      // Use the confirmed location, fallback just in case.
-      const location = userLocation || "New York"; 
-      const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(location)}`);
+      // Only fetch context if we have a valid location
+      if (!userLocation || !userLocation.trim()) {
+        return null; // Don't fetch without a proper location
+      }
+      
+      const response = await apiRequest("GET", `/api/assistant/context?location=${encodeURIComponent(userLocation)}`);
       return response.json();
     },
-    // Enable only when chat is open, we have an ID, location isn't loading, and location exists.
-    enabled: isOpen && !!conversationId && !isLoadingLocation && !!userLocation,
+    enabled: isOpen && !!userLocation && userLocation.trim() !== "", // Only enabled when we have a valid location
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
   
   // Re-fetch context data when location changes (and is no longer loading)
@@ -322,6 +368,43 @@ Wind: ${contextData.weather.current.wind} mph
       });
     }
   }, [conversationId, contextData, isLoadingContext]);
+  
+  // Location mode management functions
+  const toggleLocationMode = () => {
+    const newMode = !locationIndependentMode;
+    setLocationIndependentMode(newMode);
+    localStorage.setItem("locationIndependentMode", JSON.stringify(newMode));
+    
+    // Show appropriate message
+    toast({
+      title: newMode ? "Location-Independent Mode Enabled" : "Location Mode Enabled",
+      description: newMode 
+        ? "Assistant will provide general agricultural advice without location-specific data"
+        : "Assistant will use your location for weather-based recommendations",
+    });
+    
+    // If enabling location mode, request permission
+    if (!newMode && !userLocation) {
+      requestLocationPermission();
+    }
+  };
+  
+  const dismissLocationModal = () => {
+    setShowLocationModal(false);
+  };
+  
+  const enableLocationMode = () => {
+    setLocationIndependentMode(false);
+    localStorage.setItem("locationIndependentMode", "false");
+    setShowLocationModal(false);
+    requestLocationPermission();
+  };
+  
+  const stayInIndependentMode = () => {
+    setLocationIndependentMode(true);
+    localStorage.setItem("locationIndependentMode", "true");
+    setShowLocationModal(false);
+  };
   
   const toggleChat = () => {
     setIsOpen(!isOpen);
@@ -608,7 +691,89 @@ Wind: ${contextData.weather.current.wind} mph
             </Button>
           </div>
         </form>
+        
+        {/* Location mode indicator */}
+        <div className="px-4 py-2 border-t border-neutral-200 bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            {locationIndependentMode ? (
+              <>
+                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                <span className="text-xs text-gray-600">Location-independent mode</span>
+              </>
+            ) : (
+              <>
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span className="text-xs text-gray-600">
+                  {userLocation ? `Location: ${userLocation}` : "Location mode (no location set)"}
+                </span>
+              </>
+            )}
+            {validatedLocation && confidence > 0 && (
+              <span className="text-xs text-gray-500">
+                ({Math.round(confidence * 100)}% confidence)
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleLocationMode}
+            className="text-xs"
+          >
+            Toggle Mode
+          </Button>
+        </div>
       </div>
+      
+      {/* Location Mode Selection Modal */}
+      <Dialog open={showLocationModal} onOpenChange={setShowLocationModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Location Settings</DialogTitle>
+            <DialogDescription>
+              Choose how you'd like to use the agricultural assistant.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-4">
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                No location was detected. You can either enable location access for weather-based recommendations 
+                or continue in location-independent mode for general agricultural advice.
+              </AlertDescription>
+            </Alert>
+            
+            <div className="space-y-3">
+              <div className="p-4 border rounded-lg">
+                <h4 className="font-medium mb-2">📍 Location-Based Mode</h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Get weather-specific recommendations and location-based agricultural advice.
+                </p>
+                <Button onClick={enableLocationMode} className="w-full">
+                  Enable Location Access
+                </Button>
+              </div>
+              
+              <div className="p-4 border rounded-lg">
+                <h4 className="font-medium mb-2">🌍 Location-Independent Mode</h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Get general agricultural advice without location-specific data.
+                </p>
+                <Button variant="outline" onClick={stayInIndependentMode} className="w-full">
+                  Continue Without Location
+                </Button>
+              </div>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="ghost" onClick={dismissLocationModal}>
+              Dismiss
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

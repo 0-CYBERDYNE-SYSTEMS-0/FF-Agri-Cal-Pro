@@ -1,0 +1,59 @@
+graph TD
+    %% Main components and user interaction
+    User([User]) --> Client[Client Application]
+    Client --> Server[Server API]
+    
+    %% Core pipelines
+    subgraph "Data Management"
+        Server --> DB[(Database)]
+        DB --> Events[Calendar Events]
+        DB --> Projects[Farm Projects]
+        DB --> Users[User Profiles]
+    end
+    
+    %% External API integration
+    subgraph "External Services"
+        Server --> |Weather data| Weather[OpenWeather API]
+        Server --> |Web search| Search[Perplexity API]
+    end
+    
+    %% Assistant functionality
+    subgraph "AI Assistant"
+        Client --> Assistant[Farm Assistant]
+        Assistant --> |Tool calls| ToolDispatcher{Tool Dispatcher}
+        
+        ToolDispatcher --> |create_calendar_event| CreateEvent[Create Event]
+        ToolDispatcher --> |update_calendar_event| UpdateEvent[Update Event]
+        ToolDispatcher --> |delete_calendar_event| DeleteEvent[Delete Event]
+        ToolDispatcher --> |search_calendar_events| SearchEvents[Search Events]
+        ToolDispatcher --> |get_or_create_project| ProjectManager[Project Manager]
+        ToolDispatcher --> |get_weather| WeatherTool[Weather Tool]
+        ToolDispatcher --> |web_search| WebSearch[Web Search]
+        
+        CreateEvent --> DB
+        UpdateEvent --> DB
+        DeleteEvent --> DB
+        SearchEvents --> DB
+        ProjectManager --> DB
+        WeatherTool --> Weather
+        WebSearch --> Search
+    end
+    
+    %% Calendar export functionality
+    subgraph "Calendar Export"
+        Events --> ICSExport[ICS Export]
+        ICSExport --> CalendarFile[Calendar File]
+    end
+    
+    %% Contextual recommendations
+    subgraph "Agricultural Intelligence"
+        Weather --> WeatherRec[Weather Recommendations]
+        Events --> SeasonalRec[Seasonal Recommendations]
+        
+        WeatherRec --> Recommendations[Farming Recommendations]
+        SeasonalRec --> Recommendations
+    end
+    
+    %% Final outputs
+    CalendarFile --> ExternalCalendar[External Calendar Apps]
+    Recommendations --> Client 

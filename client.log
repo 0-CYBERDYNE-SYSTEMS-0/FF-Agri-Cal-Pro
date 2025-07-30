@@ -1,0 +1,11 @@
+
+> rest-express@1.0.0 client:dev
+> cd client && npx vite --port 5001
+
+
+  VITE v5.4.14  ready in 258 ms
+
+  ➜  Local:   http://localhost:5001/
+  ➜  Network: use --host to expose
+11:20:16 PM [vite] vite.config.ts changed, restarting server...
+11:20:16 PM [vite] server restarted.

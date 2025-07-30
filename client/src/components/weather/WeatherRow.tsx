@@ -1,7 +1,7 @@
 import { WeatherForecast } from "@shared/schema";
 import ForecastCard from "./ForecastCard";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getLocationName } from "@/lib/openWeatherApi";
+import { getLocationName, getLocationStatus } from "@/lib/openWeatherApi";
 
 interface WeatherRowProps {
   forecasts: WeatherForecast[];
@@ -39,6 +39,7 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
   }
 
   const displayLocation = getLocationName(location || "default");
+  const locationStatus = getLocationStatus(location || "default");
   
   // Make a copy of the first forecast with isCurrent flag for the current conditions card
   const currentForecast = { ...forecasts[0], isCurrent: true };
@@ -52,7 +53,15 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
     <div className="space-y-6">
       {/* Current Conditions */}
       <div>
-        <h3 className="text-center text-lg font-semibold mb-2">{`Weather in ${displayLocation}`}</h3>
+        <div className="text-center mb-4">
+          <h3 className="text-lg font-semibold text-neutral-800 mb-1">Current Weather</h3>
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-2xl font-bold text-primary">{displayLocation}</span>
+            <span className={`text-sm px-2 py-1 rounded-full ${locationStatus.className}`}>
+              {locationStatus.icon} {locationStatus.text}
+            </span>
+          </div>
+        </div>
         
         {/* Current Conditions Card */}
         <div className="mb-6">
@@ -67,7 +76,7 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
         <h4 className="text-md font-semibold mb-2">Forecast</h4>
         <div className={vertical 
           ? "flex flex-col gap-4" 
-          : "grid grid-cols-1 md:grid-cols-6 gap-4"
+          : "grid grid-cols-1 md:grid-cols-7 gap-3"
         }>
           {displayedForecasts.map((forecast, index) => (
             <ForecastCard 

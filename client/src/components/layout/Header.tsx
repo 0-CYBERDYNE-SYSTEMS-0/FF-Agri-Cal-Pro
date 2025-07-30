@@ -1,17 +1,13 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Navigation from "./Navigation";
-import { useQuery } from "@tanstack/react-query";
-import { getWeatherForecast } from "@/lib/openWeatherApi";
+import { useWeather } from "@/hooks/use-weather";
 
 export default function Header() {
   const { user, logout } = useAuth();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  const { data: weatherData } = useQuery({
-    queryKey: ["/api/weather"],
-    enabled: !!user
-  });
+  const { weatherData = [], isLoading, error } = useWeather();
 
   const currentWeather = weatherData?.[0];
 
@@ -40,7 +36,15 @@ export default function Header() {
             <div className="flex items-center space-x-4">
               <button id="weather-btn" className="flex items-center text-neutral-600 hover:text-primary transition">
                 <span className="mr-1">{currentWeather?.icon || "🌤️"}</span>
-                <span>{currentWeather?.temperature ? `${currentWeather.temperature}°F` : "Loading..."}</span>
+                <span>
+                  {currentWeather?.temperature != null
+                    ? `${currentWeather.temperature}°F`
+                    : isLoading
+                      ? "Loading..."
+                      : error
+                        ? "Error"
+                        : "-"}
+                </span>
               </button>
               <button id="notifications-btn" className="text-neutral-600 hover:text-primary transition relative">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -1,19 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { WeatherForecast } from "@shared/schema";
-import { getWeatherIcon, getLocationName, getWeatherRecommendation } from "@/lib/openWeatherApi";
+import { getWeatherIcon, getLocationName, getWeatherRecommendation, getLocationStatus } from "@/lib/openWeatherApi";
 import WeatherRow from "@/components/weather/WeatherRow";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useState, useEffect } from "react";
 import { Event } from "@shared/schema";
 import { formatDate, isSameDay } from "@/lib/calendarUtils";
 import { useLocation } from "@/contexts/LocationContext";
 import { useWeather } from "@/hooks/use-weather";
+import { MapPin, AlertCircle, RefreshCw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 export default function Weather() {
   const [selectedLocation, setSelectedLocation] = useState("default");
-  const { location: userLocation, requestLocationPermission } = useLocation();
+  const [showCustomLocationDialog, setShowCustomLocationDialog] = useState(false);
+  const [customLocationInput, setCustomLocationInput] = useState("");
+  const { location: userLocation, requestLocationPermission, isLoading: locationLoading, error: locationError, hasRequestedPermission } = useLocation();
   
   // Use user's location when available
   useEffect(() => {
@@ -22,20 +29,11 @@ export default function Weather() {
     }
   }, [userLocation, selectedLocation]);
   
-  // Request location permission when component mounts, if needed
-  useEffect(() => {
-    const hasRequestedLocation = localStorage.getItem("locationRequested");
-    if (!hasRequestedLocation) {
-      requestLocationPermission();
-      localStorage.setItem("locationRequested", "true");
-    }
-  }, [requestLocationPermission]);
-  
   // Determine the actual location to use for weather fetching
   const locationToUse = selectedLocation === "default" ? userLocation : selectedLocation;
   
   // Use our weather hook to manage weather data
-  const { weatherData, isLoading: isLoadingWeather, error } = useWeather(locationToUse);
+  const { weatherData, isLoading: isLoadingWeather, error, hasLocation, location: effectiveLocation } = useWeather(locationToUse || undefined);
   
   const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
     queryKey: ["/api/events"],
@@ -67,29 +65,150 @@ export default function Weather() {
   
   // Get today's forecast
   const todayForecast = weatherData[0];
+  const locationStatus = locationToUse ? getLocationStatus(locationToUse) : null;
+  
+  // Handle location permission request
+  const handleRequestLocation = () => {
+    requestLocationPermission();
+  };
+  
+  // Handle manual location selection
+  const handleLocationChange = (value: string) => {
+    if (value === "custom") {
+      setShowCustomLocationDialog(true);
+    } else {
+      setSelectedLocation(value);
+    }
+  };
+
+  // Handle custom location input
+  const handleCustomLocationSubmit = () => {
+    if (customLocationInput.trim()) {
+      setSelectedLocation(customLocationInput.trim());
+      setShowCustomLocationDialog(false);
+      setCustomLocationInput("");
+    }
+  };
+  
+  // Show location prompt if no location is available
+  if (!hasLocation && !locationLoading && !isLoadingWeather) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h1>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <div className="flex items-center justify-center mb-4">
+              <MapPin className="h-12 w-12 text-blue-500" />
+            </div>
+            <h2 className="text-xl font-semibold text-blue-900 mb-2">Location Required</h2>
+            <p className="text-blue-700 mb-6">
+              To show you accurate weather information, we need to know your location. 
+              You can either allow location access or manually select a location.
+            </p>
+            
+            {locationError && (
+              <Alert className="mb-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  {locationError}
+                </AlertDescription>
+              </Alert>
+            )}
+            
+            <div className="space-y-4">
+              <Button 
+                onClick={handleRequestLocation} 
+                className="w-full"
+                disabled={locationLoading}
+              >
+                {locationLoading ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Getting your location...
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Use My Current Location
+                  </>
+                )}
+              </Button>
+              
+              <div className="flex items-center">
+                <div className="flex-1 border-t border-gray-200"></div>
+                <span className="px-3 text-sm text-gray-500">or</span>
+                <div className="flex-1 border-t border-gray-200"></div>
+              </div>
+              
+              <Select value={selectedLocation} onValueChange={handleLocationChange}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a location manually" />
+                </SelectTrigger>
+                              <SelectContent>
+                <SelectItem value="custom">Enter Custom Location...</SelectItem>
+              </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <>
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-neutral-900">Weather Forecast</h1>
-          <p className="text-neutral-500">{getLocationName(locationToUse)}</p>
-        </div>
-        <Select value={selectedLocation} onValueChange={setSelectedLocation}>
-          <SelectTrigger className="w-52">
-            <SelectValue placeholder="Select location" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="default">Your Location</SelectItem>
-            {userLocation && userLocation !== "default" && (
-              <SelectItem value={userLocation}>{userLocation}</SelectItem>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-lg font-medium text-primary">{getLocationName(locationToUse || "")}</span>
+            {locationStatus && (
+              <span className={`text-xs px-2 py-1 rounded-full ${locationStatus.className}`}>
+                {locationStatus.icon} {locationStatus.text}
+              </span>
             )}
-            <SelectItem value="north">North Fields</SelectItem>
-            <SelectItem value="south">South Fields</SelectItem>
-            <SelectItem value="greenhouse">Greenhouse</SelectItem>
-          </SelectContent>
-        </Select>
+            {userLocation && locationToUse === userLocation && (
+              <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">📍 Your Location</span>
+            )}
+            {locationToUse !== userLocation && locationToUse && (
+              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">📍 Custom Location</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {!userLocation && !locationLoading && (
+            <Button variant="outline" size="sm" onClick={handleRequestLocation}>
+              <MapPin className="h-4 w-4 mr-1" />
+              Get Location
+            </Button>
+          )}
+          <Select value={selectedLocation} onValueChange={handleLocationChange}>
+            <SelectTrigger className="w-52">
+              <SelectValue placeholder="Select location" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Your Location</SelectItem>
+              {userLocation && userLocation !== "default" && (
+                <SelectItem value={userLocation}>{userLocation}</SelectItem>
+              )}
+              <SelectItem value="custom">Enter Custom Location...</SelectItem>
+              <SelectItem value="north">North Fields</SelectItem>
+              <SelectItem value="south">South Fields</SelectItem>
+              <SelectItem value="greenhouse">Greenhouse</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
+      
+      {/* Show loading or error states */}
+      {error && (
+        <Alert className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {error}. Please try selecting a different location or check your internet connection.
+          </AlertDescription>
+        </Alert>
+      )}
       
       {/* Current weather card */}
       {isLoadingWeather ? (
@@ -101,6 +220,9 @@ export default function Weather() {
               <h2 className="text-xl font-medium mb-1">Today's Weather</h2>
               <p className="text-primary-foreground/80">
                 {formatDate(new Date(), { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+              <p className="text-primary-foreground/90 text-sm mt-1 font-medium">
+                📍 {getLocationName(effectiveLocation || "")}
               </p>
               
               <div className="mt-4 space-y-1">
@@ -212,6 +334,38 @@ export default function Weather() {
           </Card>
         )}
       </div>
+      
+      {/* Custom Location Dialog */}
+      <Dialog open={showCustomLocationDialog} onOpenChange={setShowCustomLocationDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enter Custom Location</DialogTitle>
+            <DialogDescription>
+              Enter a city, address, or coordinates (e.g., "Portland, OR", "Seattle", "40.7128,-74.0060")
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder="e.g., Portland, OR or Seattle, WA"
+              value={customLocationInput}
+              onChange={(e) => setCustomLocationInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleCustomLocationSubmit();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCustomLocationDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCustomLocationSubmit} disabled={!customLocationInput.trim()}>
+              Set Location
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

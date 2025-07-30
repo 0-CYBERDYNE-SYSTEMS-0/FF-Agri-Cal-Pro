@@ -4,6 +4,7 @@ import Calendar from "@/pages/Calendar";
 import Projects from "@/pages/Projects";
 import Assistant from "@/pages/Assistant";
 import Weather from "@/pages/Weather";
+import Files from "@/pages/Files";
 import Header from "@/components/layout/Header";
 import { useAuth } from "./contexts/AuthContext";
 import { useEffect, Suspense } from "react";
@@ -17,6 +18,7 @@ function Router() {
       <Route path="/projects" component={Projects} />
       <Route path="/assistant" component={Assistant} />
       <Route path="/weather" component={Weather} />
+      <Route path="/files" component={Files} />
       <Route component={NotFound} />
     </Switch>
   );

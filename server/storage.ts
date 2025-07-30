@@ -1,4 +1,4 @@
-import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, WeatherForecast } from "@shared/schema";
+import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, WeatherForecast } from "@shared/schema";
 
 export interface IStorage {
   // User methods
@@ -28,6 +28,24 @@ export interface IStorage {
   createConversation(conversation: InsertConversation): Promise<Conversation>;
   updateConversation(id: number, messages: any[]): Promise<Conversation | undefined>;
 
+  // User file methods
+  getUserFile(id: number): Promise<UserFile | undefined>;
+  getUserFilesByUser(userId: number): Promise<UserFile[]>;
+  getUserFilesByProject(projectId: number): Promise<UserFile[]>;
+  getUserFilesByType(userId: number, fileType: string): Promise<UserFile[]>;
+  createUserFile(file: InsertUserFile): Promise<UserFile>;
+  updateUserFile(id: number, file: Partial<UserFile>): Promise<UserFile | undefined>;
+  deleteUserFile(id: number): Promise<boolean>;
+
+  // User document methods
+  getUserDocument(id: number): Promise<UserDocument | undefined>;
+  getUserDocumentsByUser(userId: number): Promise<UserDocument[]>;
+  getUserDocumentsByProject(projectId: number): Promise<UserDocument[]>;
+  getUserDocumentsByType(userId: number, documentType: string): Promise<UserDocument[]>;
+  createUserDocument(document: InsertUserDocument): Promise<UserDocument>;
+  updateUserDocument(id: number, document: Partial<UserDocument>): Promise<UserDocument | undefined>;
+  deleteUserDocument(id: number): Promise<boolean>;
+
   // Storage interface intentionally doesn't include weather functions
   // as weather data comes directly from the OpenWeatherAPI
 }
@@ -37,20 +55,28 @@ export class MemStorage implements IStorage {
   private projects: Map<number, Project>;
   private events: Map<number, Event>;
   private conversations: Map<number, Conversation>;
+  private userFiles: Map<number, UserFile>;
+  private userDocuments: Map<number, UserDocument>;
   private currentUserId: number;
   private currentProjectId: number;
   private currentEventId: number;
   private currentConversationId: number;
+  private currentUserFileId: number;
+  private currentUserDocumentId: number;
 
   constructor() {
     this.users = new Map();
     this.projects = new Map();
     this.events = new Map();
     this.conversations = new Map();
+    this.userFiles = new Map();
+    this.userDocuments = new Map();
     this.currentUserId = 1;
     this.currentProjectId = 1;
     this.currentEventId = 1;
     this.currentConversationId = 1;
+    this.currentUserFileId = 1;
+    this.currentUserDocumentId = 1;
 
     // Initialize with sample data
     this.initSampleData().catch(error => {
@@ -613,6 +639,109 @@ export class MemStorage implements IStorage {
     const updatedConversation = { ...conversation, messages };
     this.conversations.set(id, updatedConversation);
     return updatedConversation;
+  }
+
+  // User file methods
+  async getUserFile(id: number): Promise<UserFile | undefined> {
+    return this.userFiles.get(id);
+  }
+
+  async getUserFilesByUser(userId: number): Promise<UserFile[]> {
+    return Array.from(this.userFiles.values()).filter(
+      (file) => file.userId === userId
+    );
+  }
+
+  async getUserFilesByProject(projectId: number): Promise<UserFile[]> {
+    return Array.from(this.userFiles.values()).filter(
+      (file) => file.projectId === projectId
+    );
+  }
+
+  async getUserFilesByType(userId: number, fileType: string): Promise<UserFile[]> {
+    return Array.from(this.userFiles.values()).filter(
+      (file) => file.userId === userId && file.fileType === fileType
+    );
+  }
+
+  async createUserFile(insertFile: InsertUserFile): Promise<UserFile> {
+    const id = this.currentUserFileId++;
+    const file: UserFile = { 
+      ...insertFile, 
+      id, 
+      uploadDate: new Date(),
+      lastAccessed: new Date(),
+      projectId: insertFile.projectId || null,
+      metadata: insertFile.metadata || null,
+      description: insertFile.description || null
+    };
+    this.userFiles.set(id, file);
+    return file;
+  }
+
+  async updateUserFile(id: number, fileData: Partial<UserFile>): Promise<UserFile | undefined> {
+    const file = this.userFiles.get(id);
+    if (!file) return undefined;
+
+    const updatedFile = { ...file, ...fileData, lastAccessed: new Date() };
+    this.userFiles.set(id, updatedFile);
+    return updatedFile;
+  }
+
+  async deleteUserFile(id: number): Promise<boolean> {
+    return this.userFiles.delete(id);
+  }
+
+  // User document methods
+  async getUserDocument(id: number): Promise<UserDocument | undefined> {
+    return this.userDocuments.get(id);
+  }
+
+  async getUserDocumentsByUser(userId: number): Promise<UserDocument[]> {
+    return Array.from(this.userDocuments.values()).filter(
+      (doc) => doc.userId === userId
+    );
+  }
+
+  async getUserDocumentsByProject(projectId: number): Promise<UserDocument[]> {
+    return Array.from(this.userDocuments.values()).filter(
+      (doc) => doc.projectId === projectId
+    );
+  }
+
+  async getUserDocumentsByType(userId: number, documentType: string): Promise<UserDocument[]> {
+    return Array.from(this.userDocuments.values()).filter(
+      (doc) => doc.userId === userId && doc.documentType === documentType
+    );
+  }
+
+  async createUserDocument(insertDocument: InsertUserDocument): Promise<UserDocument> {
+    const id = this.currentUserDocumentId++;
+    const document: UserDocument = { 
+      ...insertDocument, 
+      id, 
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      projectId: insertDocument.projectId || null,
+      documentType: insertDocument.documentType || "note",
+      tags: insertDocument.tags || null,
+      isPublic: insertDocument.isPublic || null
+    };
+    this.userDocuments.set(id, document);
+    return document;
+  }
+
+  async updateUserDocument(id: number, documentData: Partial<UserDocument>): Promise<UserDocument | undefined> {
+    const document = this.userDocuments.get(id);
+    if (!document) return undefined;
+
+    const updatedDocument = { ...document, ...documentData, updatedAt: new Date() };
+    this.userDocuments.set(id, updatedDocument);
+    return updatedDocument;
+  }
+
+  async deleteUserDocument(id: number): Promise<boolean> {
+    return this.userDocuments.delete(id);
   }
 
   // Weather functionality removed in favor of OpenWeather API

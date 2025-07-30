@@ -2,11 +2,11 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema } from "@shared/schema";
+import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
-import { getWeatherInfo, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
+import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
 import { eq } from "drizzle-orm";
 import { events, Event } from "@shared/schema";
 
@@ -39,6 +39,26 @@ function getSeasonForDate(date: Date): string {
       return "Spring";
     }
   }
+}
+
+// Define the formatted weather data type
+interface FormattedWeatherData {
+  location: string;
+  current: WeatherForecast;
+  forecast: WeatherForecast[];
+}
+
+// Helper function to format weather data
+function formatWeatherData(weatherData: { locationName: string, forecasts: WeatherForecast[] }): FormattedWeatherData {
+  const [current, ...forecast] = weatherData.forecasts;
+  if (!current) {
+    throw new Error('No weather data available');
+  }
+  return {
+    location: weatherData.locationName,
+    current: { ...current, isCurrent: true },
+    forecast: forecast.map((day: WeatherForecast) => ({ ...day, isCurrent: false }))
+  };
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -294,79 +314,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Weather routes
   app.get("/api/weather", async (req: Request, res: Response) => {
     try {
-      // Get location from query params or use default
-      const location = (req.query.location as string) || "New York";
-
-      // Get real weather data from OpenWeather API
-      const weatherData = await getWeatherInfo(location);
-
-      if (!weatherData) {
-        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
+      const location = req.query.location as string;
+      if (!location) {
+        return res.status(400).json({ message: "Location is required" });
       }
 
-      // Convert the API response to our WeatherForecast format for consistency
-      const forecast = [
-        // Today's forecast
-        {
-          date: new Date().toISOString().split('T')[0],
-          dayOfWeek: "Today",
-          temperature: weatherData.current.temp, // Already in Fahrenheit
-          weatherDescription: weatherData.current.weather_description,
-          icon: weatherIconToEmoji(weatherData.current.icon),
-          wind: weatherData.current.wind_speed, // Already in mph
-          humidity: weatherData.current.humidity,
-          precipitation: 0 // Not directly available in the API, would need additional calls
-        },
-        // Next 6 days forecast mapped from weatherData.forecast
-        ...weatherData.forecast.slice(0, 6).map((day, i) => {
-          const date = new Date();
-          date.setDate(date.getDate() + i + 1);
+      const weatherData = await fetchComprehensiveWeather(location);
+      if (!weatherData) {
+        return res.status(404).json({ 
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
+        });
+      }
 
-          return {
-            date: day.date,
-            dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(day.date).getDay()],
-            temperature: day.temp, // Already in Fahrenheit
-            weatherDescription: day.weather_description,
-            icon: weatherIconToEmoji(day.icon),
-            wind: day.wind || 0, // Use provided wind value if available
-            humidity: day.humidity || 0, // Use provided humidity value if available
-            precipitation: day.precipitation || 0 // Use provided precipitation if available
-          };
-        })
-      ];
-
-      return res.status(200).json(forecast);
+      const formattedData = formatWeatherData(weatherData);
+      return res.status(200).json(formattedData);
     } catch (err) {
-      console.error("Error fetching weather data:", err);
       return handleApiError(err, res);
     }
   });
 
-// Helper function to convert OpenWeather icon codes to emoji
-function weatherIconToEmoji(iconCode: string): string {
-  const iconMap: {[key: string]: string} = {
-    '01d': '☀️', // clear sky day
-    '01n': '🌙', // clear sky night
-    '02d': '⛅', // few clouds day
-    '02n': '☁️', // few clouds night
-    '03d': '☁️', // scattered clouds
-    '03n': '☁️',
-    '04d': '☁️', // broken clouds
-    '04n': '☁️',
-    '09d': '🌧️', // shower rain
-    '09n': '🌧️',
-    '10d': '🌦️', // rain
-    '10n': '🌧️',
-    '11d': '⛈️', // thunderstorm
-    '11n': '⛈️',
-    '13d': '❄️', // snow
-    '13n': '❄️',
-    '50d': '🌫️', // mist
-    '50n': '🌫️'
-  };
+  // Update the agriculture recommendations endpoint
+  app.get("/api/weather/agriculture", async (req: Request, res: Response) => {
+    try {
+      const location = req.query.location as string;
+      if (!location) {
+        return res.status(400).json({ message: "Location is required" });
+      }
 
-  return iconMap[iconCode] || '🌤️';
-}
+      const weatherData = await fetchComprehensiveWeather(location);
+      if (!weatherData) {
+        return res.status(404).json({ 
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
+        });
+      }
+
+      const recommendations = getAgricultureRecommendations(weatherData);
+      return res.status(200).json({ recommendations });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
 
   // Real-time weather data API for the AI assistant
   app.get("/api/weather-data", async (req: Request, res: Response) => {
@@ -405,35 +392,13 @@ function weatherIconToEmoji(iconCode: string): string {
         return res.status(400).json({ message: "Location parameter is required" });
       }
 
-      const weatherData = await getWeatherInfo(location);
+      const weatherData = await fetchComprehensiveWeather(location);
 
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
 
       return res.status(200).json(weatherData);
-    } catch (err) {
-      return handleApiError(err, res);
-    }
-  });
-
-  // Agricultural weather recommendations API
-  app.get("/api/agri-weather-recommendations", async (req: Request, res: Response) => {
-    try {
-      const location = (req.query.location as string);
-
-      if (!location) {
-        return res.status(400).json({ message: "Location parameter is required" });
-      }
-
-      const weatherData = await getWeatherInfo(location);
-
-      if (!weatherData) {
-        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
-      }
-
-      const recommendations = getAgricultureRecommendations(weatherData);
-      return res.status(200).json({ recommendations });
     } catch (err) {
       return handleApiError(err, res);
     }
@@ -501,7 +466,7 @@ function weatherIconToEmoji(iconCode: string): string {
         const userLocation = "New York, USA"; // Default location - in real app would be user's actual location
 
         // Get weather data
-        const weatherData = await getWeatherInfo(userLocation);
+        const weatherData = await fetchComprehensiveWeather(userLocation);
 
         // Determine current season
         const now = new Date();
@@ -526,8 +491,8 @@ function weatherIconToEmoji(iconCode: string): string {
         }
 
         // Create assistant greeting
-        const weatherInfo = weatherData ? 
-          `The current weather in ${userLocation} is ${weatherData.current.temp}°F with ${weatherData.current.weather_description}. ` : 
+        const weatherInfo = weatherData && weatherData.forecasts.length > 0 ? 
+          `The current weather in ${userLocation} is ${weatherData.forecasts[0].temperature}°F with ${weatherData.forecasts[0].weatherDescription}. ` : 
           "";
 
         const greeting = `Hello! I'm your Farm Friend agricultural assistant. ${weatherInfo}We're currently in ${currentSeason}, which is typically the time for ${seasonalActivities} in your region.
@@ -594,7 +559,7 @@ How can I help with your agricultural planning today?`;
       // This avoids port issues and is more efficient
 
       // Get weather data
-      const weatherData = await getWeatherInfo(userLocation);
+      const weatherData = await fetchComprehensiveWeather(userLocation);
 
       // Get user's calendar events (using default user ID 1)
       const userId = 1;
@@ -609,17 +574,17 @@ How can I help with your agricultural planning today?`;
         timestamp: now.toISOString(),
         location: userLocation,
         season: currentSeason,
-        weather: weatherData ? {
+        weather: weatherData && weatherData.forecasts.length > 0 ? {
           current: {
-            temperature: weatherData.current.temp, // Already in Fahrenheit
-            conditions: weatherData.current.weather_description,
-            humidity: weatherData.current.humidity,
-            wind: Math.round(weatherData.current.wind_speed) // Already in mph
+            temperature: weatherData.forecasts[0].temperature, // Already in Fahrenheit
+            conditions: weatherData.forecasts[0].weatherDescription,
+            humidity: weatherData.forecasts[0].humidity,
+            wind: Math.round(weatherData.forecasts[0].wind) // Already in mph
           },
-          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+          forecast: weatherData.forecasts.slice(0, 6).map((day: any) => ({
             date: day.date,
-            temperature: day.temp, // Already in Fahrenheit
-            conditions: day.weather_description
+            temperature: day.temperature, // Already in Fahrenheit
+            conditions: day.weatherDescription
           }))
         } : null,
         events: userEvents.map(event => ({
@@ -643,7 +608,7 @@ Humidity: ${contextData.weather.current.humidity}%
 Wind: ${contextData.weather.current.wind} mph
 
 Weather forecast for the next ${contextData.weather.forecast.length} days:
-${contextData.weather.forecast.map((day, index) => 
+${contextData.weather.forecast.map((day: any, index: number) => 
   `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
 ).join('\n')}
 ` : ''}
@@ -873,6 +838,124 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               required: ["name"]
             }
           }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "read_user_file",
+            description: "Read content from user's uploaded files (CSV, text documents, farm data, etc.)",
+            parameters: {
+              type: "object",
+              properties: {
+                fileId: {
+                  type: "number",
+                  description: "ID of the file to read"
+                },
+                filename: {
+                  type: "string",
+                  description: "Name of the file to read (alternative to fileId)"
+                }
+              },
+              required: []
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "list_user_files",
+            description: "List user's uploaded files and documents",
+            parameters: {
+              type: "object",
+              properties: {
+                fileType: {
+                  type: "string",
+                  description: "Filter by file type (csv, ics, pdf, txt, json, etc.)"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Filter files by project ID"
+                }
+              },
+              required: []
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "create_user_document",
+            description: "Create a new document or note for the user",
+            parameters: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Title of the document"
+                },
+                content: {
+                  type: "string",
+                  description: "Content of the document (supports Markdown)"
+                },
+                documentType: {
+                  type: "string",
+                  description: "Type of document (note, plan, report, analysis, etc.)"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Optional project ID to associate with the document"
+                },
+                tags: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Tags for organizing the document"
+                }
+              },
+              required: ["title", "content"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "list_user_documents",
+            description: "List user's documents and notes",
+            parameters: {
+              type: "object",
+              properties: {
+                documentType: {
+                  type: "string",
+                  description: "Filter by document type (note, plan, report, analysis, etc.)"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Filter documents by project ID"
+                }
+              },
+              required: []
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "analyze_farm_data",
+            description: "Analyze user's uploaded farm data files (yield data, weather logs, soil reports, etc.)",
+            parameters: {
+              type: "object",
+              properties: {
+                fileId: {
+                  type: "number",
+                  description: "ID of the file to analyze"
+                },
+                analysisType: {
+                  type: "string",
+                  description: "Type of analysis (yield_analysis, weather_patterns, soil_health, growth_tracking, etc.)"
+                }
+              },
+              required: ["fileId", "analysisType"]
+            }
+          }
         }
       ];
 
@@ -968,7 +1051,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           });
 
           // Get weather data
-          const weatherData = await getWeatherInfo(location);
+          const weatherData = await fetchComprehensiveWeather(location);
 
           if (weatherData) {
             // Get agricultural recommendations based on weather
@@ -1098,6 +1181,146 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               isNew: true
             });
           }
+        } else if (functionName === "read_user_file") {
+          const { fileId, filename } = functionArgs;
+          console.log("Reading user file:", fileId || filename);
+
+          let file;
+          if (fileId) {
+            file = await storage.getUserFile(fileId);
+          } else if (filename) {
+            // Find file by name for the user
+            const userFiles = await storage.getUserFilesByUser(1);
+            file = userFiles.find(f => f.originalName === filename || f.filename === filename);
+          }
+
+          if (file) {
+            toolResponse = JSON.stringify({
+              success: true,
+              file: {
+                id: file.id,
+                filename: file.originalName,
+                fileType: file.fileType,
+                size: file.fileSize,
+                uploadDate: file.uploadDate,
+                description: file.description,
+                metadata: file.metadata
+              },
+              content: `File content would be read from: ${file.filePath}` // Placeholder for actual file reading
+            });
+          } else {
+            toolResponse = JSON.stringify({
+              success: false,
+              error: "File not found"
+            });
+          }
+        } else if (functionName === "list_user_files") {
+          const { fileType, projectId } = functionArgs;
+          console.log("Listing user files:", { fileType, projectId });
+
+          let files;
+          if (fileType) {
+            files = await storage.getUserFilesByType(1, fileType);
+          } else if (projectId) {
+            files = await storage.getUserFilesByProject(projectId);
+          } else {
+            files = await storage.getUserFilesByUser(1);
+          }
+
+          toolResponse = JSON.stringify({
+            success: true,
+            files: files.map(file => ({
+              id: file.id,
+              filename: file.originalName,
+              fileType: file.fileType,
+              size: file.fileSize,
+              uploadDate: file.uploadDate,
+              description: file.description,
+              projectId: file.projectId
+            }))
+          });
+        } else if (functionName === "create_user_document") {
+          const { title, content, documentType, projectId, tags } = functionArgs;
+          console.log("Creating user document:", title);
+
+          const documentData = {
+            userId: 1, // Default user ID
+            title,
+            content,
+            documentType: documentType || "note",
+            projectId: projectId || null,
+            tags: tags || null,
+            isPublic: false
+          };
+
+          const newDocument = await storage.createUserDocument(documentData);
+          
+          toolResponse = JSON.stringify({
+            success: true,
+            document: {
+              id: newDocument.id,
+              title: newDocument.title,
+              documentType: newDocument.documentType,
+              createdAt: newDocument.createdAt,
+              projectId: newDocument.projectId
+            }
+          });
+        } else if (functionName === "list_user_documents") {
+          const { documentType, projectId } = functionArgs;
+          console.log("Listing user documents:", { documentType, projectId });
+
+          let documents;
+          if (documentType) {
+            documents = await storage.getUserDocumentsByType(1, documentType);
+          } else if (projectId) {
+            documents = await storage.getUserDocumentsByProject(projectId);
+          } else {
+            documents = await storage.getUserDocumentsByUser(1);
+          }
+
+          toolResponse = JSON.stringify({
+            success: true,
+            documents: documents.map(doc => ({
+              id: doc.id,
+              title: doc.title,
+              documentType: doc.documentType,
+              createdAt: doc.createdAt,
+              updatedAt: doc.updatedAt,
+              projectId: doc.projectId,
+              tags: doc.tags
+            }))
+          });
+        } else if (functionName === "analyze_farm_data") {
+          const { fileId, analysisType } = functionArgs;
+          console.log("Analyzing farm data:", { fileId, analysisType });
+
+          const file = await storage.getUserFile(fileId);
+          if (!file) {
+            toolResponse = JSON.stringify({
+              success: false,
+              error: "File not found"
+            });
+          } else {
+            // This is a placeholder for actual data analysis logic
+            // In a real implementation, you would read the file content and perform the analysis
+            const analysisResult = {
+              yield_analysis: "Based on your crop yield data, average productivity is 15% above regional benchmarks.",
+              weather_patterns: "Weather data shows optimal growing conditions during spring months with consistent precipitation.",
+              soil_health: "Soil test results indicate good nitrogen levels but recommend phosphorus supplementation.",
+              growth_tracking: "Plant growth rates are within expected parameters for this variety and climate zone."
+            };
+
+            toolResponse = JSON.stringify({
+              success: true,
+              analysis: {
+                fileId: file.id,
+                filename: file.originalName,
+                analysisType,
+                result: analysisResult[analysisType as keyof typeof analysisResult] || "Analysis completed successfully.",
+                timestamp: new Date().toISOString()
+              }
+            });
+          }
         }
 
         // Add the tool response to messages array
@@ -1221,7 +1444,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       const userId = 1; // Default demo user
 
       // Get weather data
-      const weatherData = await getWeatherInfo(location);
+      const weatherData = await fetchComprehensiveWeather(location);
       if (!weatherData) {
         return res.status(404).json({ message: "Could not retrieve weather data for this location" });
       }
@@ -1240,15 +1463,15 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         season: currentSeason,
         weather: {
           current: {
-            temperature: weatherData.current.temp, // Already in Fahrenheit
-            conditions: weatherData.current.weather_description,
-            humidity: weatherData.current.humidity,
-            wind: Math.round(weatherData.current.wind_speed) // Already in mph
+            temperature: weatherData.forecasts[0].temperature, // Already in Fahrenheit
+            conditions: weatherData.forecasts[0].weatherDescription,
+            humidity: weatherData.forecasts[0].humidity,
+            wind: Math.round(weatherData.forecasts[0].wind) // Already in mph
           },
-          forecast: weatherData.forecast.slice(0, 6).map((day) => ({
+          forecast: weatherData.forecasts.slice(0, 6).map((day: any) => ({
             date: day.date,
-            temperature: day.temp, // Already in Fahrenheit
-            conditions: day.weather_description
+            temperature: day.temperature, // Already in Fahrenheit
+            conditions: day.weatherDescription
           }))
         },
         events: userEvents.map(event => ({
@@ -1399,6 +1622,245 @@ For deleting events, you only need the event ID`;
       return res.status(200).json({ success: true, message: "Assistant system message updated" });
     } catch (err) {
       console.error("Error updating assistant system message:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  // Update the real-time weather data API
+  app.get("/api/weather/realtime", async (req: Request, res: Response) => {
+    try {
+      const location = req.query.location as string;
+      if (!location) {
+        return res.status(400).json({ message: "Location is required" });
+      }
+
+      const weatherData = await fetchComprehensiveWeather(location);
+      if (!weatherData) {
+        return res.status(404).json({ 
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
+        });
+      }
+
+      const formattedData = formatWeatherData(weatherData);
+      return res.status(200).json(formattedData.current);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Update the weather-dependent events endpoint
+  app.get("/api/events/weather-dependent", async (req: Request, res: Response) => {
+    try {
+      const location = req.query.location as string;
+      if (!location) {
+        return res.status(400).json({ message: "Location is required" });
+      }
+
+      const weatherData = await fetchComprehensiveWeather(location);
+      if (!weatherData) {
+        return res.status(404).json({ 
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
+        });
+      }
+
+      // Get events that depend on weather
+      const events = await storage.getEventsByUser(1); // Using default user ID 1
+      const weatherDependentEvents = events.filter(event => event.checkWeather);
+
+      const formattedData = formatWeatherData(weatherData);
+      return res.status(200).json({
+        weather: formattedData,
+        events: weatherDependentEvents
+      });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // User File Management Routes
+  app.get("/api/files", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const fileType = req.query.fileType as string;
+      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
+
+      let files;
+      if (fileType) {
+        files = await storage.getUserFilesByType(userId, fileType);
+      } else if (projectId) {
+        files = await storage.getUserFilesByProject(projectId);
+      } else {
+        files = await storage.getUserFilesByUser(userId);
+      }
+
+      return res.status(200).json(files);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/files/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const file = await storage.getUserFile(id);
+      
+      if (!file) {
+        return res.status(404).json({ message: "File not found" });
+      }
+
+      // Update last accessed timestamp
+      await storage.updateUserFile(id, { lastAccessed: new Date() });
+      
+      return res.status(200).json(file);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/files", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const fileData = { ...req.body, userId };
+      
+      const validatedFile = insertUserFileSchema.parse(fileData);
+      const newFile = await storage.createUserFile(validatedFile);
+      
+      return res.status(201).json(newFile);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/files/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updatedFile = await storage.updateUserFile(id, req.body);
+      
+      if (!updatedFile) {
+        return res.status(404).json({ message: "File not found" });
+      }
+      
+      return res.status(200).json(updatedFile);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/files/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteUserFile(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "File not found" });
+      }
+      
+      return res.status(200).json({ message: "File deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/files/:id/content", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const file = await storage.getUserFile(id);
+      
+      if (!file) {
+        return res.status(404).json({ message: "File not found" });
+      }
+      
+      // Extract content from metadata field
+      let content = '';
+      if (file.metadata && typeof file.metadata === 'object') {
+        const metadata = file.metadata as any;
+        content = metadata.content || metadata.rawContent || '';
+      }
+      
+      // Return the file content as plain text
+      return res.status(200).type('text/plain').send(content);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // User Document Management Routes
+  app.get("/api/documents", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const documentType = req.query.documentType as string;
+      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
+
+      let documents;
+      if (documentType) {
+        documents = await storage.getUserDocumentsByType(userId, documentType);
+      } else if (projectId) {
+        documents = await storage.getUserDocumentsByProject(projectId);
+      } else {
+        documents = await storage.getUserDocumentsByUser(userId);
+      }
+
+      return res.status(200).json(documents);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/documents/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const document = await storage.getUserDocument(id);
+      
+      if (!document) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+      
+      return res.status(200).json(document);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/documents", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const documentData = { ...req.body, userId };
+      
+      const validatedDocument = insertUserDocumentSchema.parse(documentData);
+      const newDocument = await storage.createUserDocument(validatedDocument);
+      
+      return res.status(201).json(newDocument);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/documents/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updatedDocument = await storage.updateUserDocument(id, req.body);
+      
+      if (!updatedDocument) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+      
+      return res.status(200).json(updatedDocument);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/documents/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteUserDocument(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+      
+      return res.status(200).json({ message: "Document deleted successfully" });
+    } catch (err) {
       return handleApiError(err, res);
     }
   });

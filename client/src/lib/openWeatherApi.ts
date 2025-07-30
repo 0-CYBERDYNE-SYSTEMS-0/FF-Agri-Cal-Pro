@@ -13,12 +13,14 @@ const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes cache
 // This uses the real OpenWeather API through our backend
 export async function getWeatherForecast(location?: string): Promise<WeatherForecast[]> {
   try {
-    // Get effective location
-    let effectiveLocation = location || "";
-    if (!effectiveLocation) {
-      const savedLocation = localStorage.getItem("userLocation");
-      effectiveLocation = savedLocation || "New York";
+    // Validate that we have a proper location
+    if (!location || !location.trim()) {
+      throw new Error("No location provided for weather forecast");
     }
+    
+    const effectiveLocation = location.trim();
+    
+    // No automatic fallbacks - use exactly what was provided
     
     // Check cache first
     const cacheKey = effectiveLocation;
@@ -31,6 +33,11 @@ export async function getWeatherForecast(location?: string): Promise<WeatherFore
     // Cache miss or expired cache, fetch from API
     console.log(`Fetching fresh weather data for ${effectiveLocation}`);
     const response = await apiRequest("GET", `/api/weather?location=${encodeURIComponent(effectiveLocation)}`);
+    
+    if (!response.ok) {
+      throw new Error(`Weather API request failed: ${response.statusText}`);
+    }
+    
     const data = await response.json();
     
     // Cache the response
@@ -112,24 +119,49 @@ export function getLocationName(location: string): string {
   // If we have a user's saved location, use that
   const savedLocation = localStorage.getItem("userLocation");
   if (savedLocation && (location === "default" || !location)) {
-    return savedLocation;
+    return formatLocationName(savedLocation);
   }
   
   // Format the location name nicely if it's from the OpenWeather API (contains commas)
   if (location && location.includes(',')) {
+    return formatLocationName(location);
+  }
+  
+  // Handle special cases for demo locations
+  const locationMap: Record<string, string> = {
+    'north': 'North Fields',
+    'south': 'South Fields', 
+    'greenhouse': 'Greenhouse',
+    'default': savedLocation || "Your Location"
+  };
+  
+  if (locationMap[location]) {
+    return locationMap[location];
+  }
+  
+  // Otherwise, return the passed location or a default
+  return location || "Your Location";
+}
+
+function formatLocationName(location: string): string {
+  if (!location) return "Your Location";
+  
+  // Format the location name nicely if it's from the OpenWeather API (contains commas)
+  if (location.includes(',')) {
     const parts = location.split(',').map(part => part.trim());
-    // If we have city, country, state format
+    
+    // If we have city, state, country format (e.g., "New York, New York, US")
     if (parts.length === 3) {
-      return `${parts[0]}, ${parts[2]}`;
+      return `${parts[0]}, ${parts[1]}, ${parts[2]}`; // city, state, country
     }
-    // If we have city, country format
+    
+    // If we have city, country format (e.g., "New York, US")
     if (parts.length === 2) {
       return `${parts[0]}, ${parts[1]}`;
     }
   }
   
-  // Otherwise, return the passed location or a default
-  return location === "default" ? savedLocation || "Your Location" : (location || "Your Location");
+  return location;
 }
 
 // Weather utility functions
@@ -177,4 +209,37 @@ export function getWeatherWarning(forecast: WeatherForecast): string {
   }
   
   return "";
+}
+
+export function isLocationReal(location: string): boolean {
+  // Check if this is a real location (has coordinates or API-formatted name)
+  // vs demo/test locations
+  const demoLocations = ['north', 'south', 'greenhouse', 'North Fields', 'South Fields', 'Greenhouse'];
+  
+  if (demoLocations.includes(location)) {
+    return false;
+  }
+  
+  // If it contains coordinates or properly formatted location data, it's likely real
+  if (location.includes(',') || location.includes('New York')) {
+    return true;
+  }
+  
+  return true; // Default to assuming it's real
+}
+
+export function getLocationStatus(location: string): { text: string; className: string; icon: string } {
+  if (isLocationReal(location)) {
+    return {
+      text: "Live Weather Data",
+      className: "bg-green-100 text-green-800",
+      icon: "🌍"
+    };
+  } else {
+    return {
+      text: "Demo Location",
+      className: "bg-orange-100 text-orange-800", 
+      icon: "🏷️"
+    };
+  }
 }

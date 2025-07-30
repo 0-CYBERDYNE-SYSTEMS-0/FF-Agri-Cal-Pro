@@ -644,7 +644,7 @@ export function parseICSContent(icsContent: string): Partial<Event>[] {
 /**
  * Helper function to parse ICS date format
  */
-function parseICSDate(icsDate: string): string {
+function parseICSDate(icsDate: string): Date {
   // Handle date format like: 20240320T150000Z
   if (icsDate.endsWith('Z')) {
     const year = icsDate.substring(0, 4);
@@ -654,7 +654,8 @@ function parseICSDate(icsDate: string): string {
     const minute = icsDate.substring(11, 13);
     const second = icsDate.substring(13, 15);
     
-    return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+    const isoString = `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+    return new Date(isoString);
   }
   
   // If it's not a UTC date, convert it based on local timezone
@@ -666,7 +667,7 @@ function parseICSDate(icsDate: string): string {
   const second = icsDate.substring(13, 15) || '00';
   
   const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
-  return date.toISOString();
+  return date;
 }
 
 /**

@@ -58,7 +58,10 @@ export async function createConversation(initialMessages: Message[] = []): Promi
           "1. Web Search: Use the search_web function to find up-to-date information when needed, especially for specific agricultural data, seasonal information, regional farming practices, or historical agricultural trends.\n" +
           "2. Weather Tool: Use the get_weather function to get real-time weather data and agricultural recommendations for a specific location. This helps provide location-specific advice based on current and forecasted weather conditions.\n" +
           "3. Calendar Management: You can create, update, delete, and search calendar events in ICS format for agricultural tasks. You'll help users schedule their farming activities based on optimal conditions.\n" +
-          "4. Historical Data Analysis: You can analyze past weather patterns and agricultural data to provide recommendations for current planning.\n\n" +
+          "4. File Management: You can read user's uploaded files (CSV, documents, farm data) using read_user_file and list their files with list_user_files.\n" +
+          "5. Document Management: You can create notes and documents for users with create_user_document and list their existing documents with list_user_documents.\n" +
+          "6. Data Analysis: Use analyze_farm_data to analyze user's uploaded farm data files for yield analysis, weather patterns, soil health, and growth tracking.\n" +
+          "7. Historical Data Analysis: You can analyze past weather patterns and agricultural data to provide recommendations for current planning.\n\n" +
           "CALENDAR INTEGRATION CAPABILITIES:\n" +
           "- You can detect calendar-related requests in user messages\n" +
           "- You can create events with create_calendar_event\n" +
@@ -68,6 +71,14 @@ export async function createConversation(initialMessages: Message[] = []): Promi
           "- You can recommend optimal scheduling based on weather forecasts\n" +
           "- You understand agricultural seasonality and can plan accordingly\n" +
           "- You can manage farming projects with get_or_create_project\n\n" +
+          "FILE & DOCUMENT MANAGEMENT CAPABILITIES:\n" +
+          "- You can read user's uploaded files (CSV, spreadsheets, reports) with read_user_file\n" +
+          "- You can list all user files or filter by type/project with list_user_files\n" +
+          "- You can create notes, plans, and reports for users with create_user_document\n" +
+          "- You can list existing documents and filter by type/project with list_user_documents\n" +
+          "- You can analyze farm data files for insights with analyze_farm_data\n" +
+          "- Supported analysis types: yield_analysis, weather_patterns, soil_health, growth_tracking\n" +
+          "- You can help users organize their agricultural data and documentation\n\n" +
           "AGRICULTURAL EXPERTISE:\n" +
           "- You have extensive knowledge of crop cycles, planting times, and harvest periods\n" +
           "- You understand different farming techniques (conventional, organic, regenerative, etc.)\n" +
