@@ -10,10 +10,11 @@
 > rest-express@1.0.0 server
 > tsx server/index.ts
 
+Port 5001 is in use, trying another one...
 
-  VITE v5.4.14  ready in 164 ms
+  VITE v5.4.14  ready in 139 ms
 
-  ➜  Local:   http://localhost:5001/
+  ➜  Local:   http://localhost:5002/
   ➜  Network: use --host to expose
 🚀 Initializing scheduled jobs...
 ✓ Weather monitoring job scheduled (every 6 hours)
@@ -88,15 +89,42 @@ Available environment variables: [
   'NODE_ENV'
 ]
 Starting server on port: 3000
-9:55:00 AM [express] serving on port 3000
+10:57:21 AM [express] serving on port 3000
 Server is running at http://localhost:3000
 Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
-Fetching fresh weather data for 44.17, -122.22 (44.17243687753259, -122.22043327703715)
-9:55:02 AM [express] GET /api/events 200 in 1ms :: [{"userId":1,"projectId":1,"title":"Soil Preparat…
-9:55:02 AM [express] GET /api/projects 200 in 0ms :: [{"userId":1,"name":"Summer Vegetable Garden","…
-9:55:02 AM [express] GET /api/notifications/unread/count 304 in 0ms :: {"count":0}
-Weather data processed for 44.17, -122.22
-Weather data retrieved for 44.17, -122.22: 7 forecasts
-9:55:03 AM [express] GET /api/weather 200 in 1339ms :: {"locationName":"44.17, -122.22","forecasts":…
+Reverse geocoding coordinates: 44.17243687753259, -122.22043327703715
+10:57:22 AM [express] GET /api/events 200 in 1ms :: [{"userId":1,"projectId":1,"title":"Soil Preparat…
+10:57:22 AM [express] GET /api/projects 200 in 0ms :: [{"userId":1,"name":"Summer Vegetable Garden","…
+10:57:22 AM [express] GET /api/notifications/unread/count 304 in 0ms :: {"count":0}
+Reverse geocoded to: Lane County, Oregon
+Fetching fresh weather data for Lane County, Oregon (44.17243687753259, -122.22043327703715)
+Weather data processed for Lane County, Oregon
+Weather data retrieved for Lane County, Oregon: 7 forecasts
+10:57:24 AM [express] GET /api/weather 200 in 1651ms :: {"locationName":"Lane County, Oregon","foreca…
+Reverse geocoding coordinates: 45.5152, -122.6784
+Reverse geocoded to: Portland, Oregon
+Fetching fresh weather data for Portland, Oregon (45.5152, -122.6784)
+Weather data processed for Portland, Oregon
+Weather data retrieved for Portland, Oregon: 7 forecasts
+10:57:37 AM [express] GET /api/weather 200 in 1254ms :: {"locationName":"Portland, Oregon","forecasts…
+Reverse geocoding coordinates: 40.7128, -74.006
+Reverse geocoded to: City of New York, New York
+Fetching fresh weather data for City of New York, New York (40.7128, -74.006)
+Weather data processed for City of New York, New York
+Weather data retrieved for City of New York, New York: 7 forecasts
+10:57:50 AM [express] GET /api/weather 200 in 1865ms :: {"locationName":"City of New York, New York",…
+Reverse geocoding coordinates: 44.0521, -123.0868
+Reverse geocoded to: Eugene, Oregon
+Fetching fresh weather data for Eugene, Oregon (44.0521, -123.0868)
+Weather data processed for Eugene, Oregon
+Weather data retrieved for Eugene, Oregon: 7 forecasts
+10:57:50 AM [express] GET /api/weather 200 in 336ms :: {"locationName":"Eugene, Oregon","forecasts":[…
+Reverse geocoding coordinates: 47.6062, -122.3321
+Reverse geocoded to: Seattle, Washington
+Fetching fresh weather data for Seattle, Washington (47.6062, -122.3321)
+Weather data processed for Seattle, Washington
+Weather data retrieved for Seattle, Washington: 7 forecasts
+10:57:51 AM [express] GET /api/weather 200 in 1338ms :: {"locationName":"Seattle, Washington","foreca…
+10:57:52 AM [express] GET /api/notifications/unread/count 304 in 2ms :: {"count":0}

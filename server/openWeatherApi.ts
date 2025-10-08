@@ -111,6 +111,52 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
 }
 
 /**
+ * Reverse geocode coordinates to get location name
+ * Uses Nominatim (OpenStreetMap) for reverse geocoding
+ */
+export async function reverseGeocodeCoordinates(lat: number, lon: number): Promise<GeocodingResult | null> {
+  try {
+    console.log(`Reverse geocoding coordinates: ${lat}, ${lon}`);
+    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`;
+    const response = await axios.get(nominatimUrl, {
+      headers: {
+        'User-Agent': 'FF-Agri-Cal-Pro/1.0'
+      }
+    });
+
+    if (response.data && response.data.address) {
+      const address = response.data.address;
+      const city = address.city || address.town || address.village || address.county || 'Unknown';
+      const state = address.state || '';
+      const country = address.country || '';
+      
+      // Build a nice display name
+      let resolvedName = city;
+      if (state) resolvedName += `, ${state}`;
+      if (country && country !== 'United States') resolvedName += `, ${country}`;
+      
+      console.log(`Reverse geocoded to: ${resolvedName}`);
+      
+      return {
+        name: city,
+        lat,
+        lon,
+        country,
+        state,
+        admin1: state,
+        resolvedName
+      };
+    }
+
+    console.log(`No reverse geocoding results for coordinates: ${lat}, ${lon}`);
+    return null;
+  } catch (error) {
+    console.error('Error in reverse geocoding:', error);
+    return null;
+  }
+}
+
+/**
  * Fetch comprehensive weather data for a location
  * Handles both string locations and coordinate pairs
  */
@@ -130,10 +176,16 @@ export async function fetchComprehensiveWeather(
       console.log(`Using cached weather data for ${cacheKey}`);
       const cachedEntry = weatherCache[cacheKey];
       let tempLocationName = cacheKey;
+      
       if (typeof locationInput === 'string') {
         const geocoded = await geocodeLocation(locationInput);
         tempLocationName = geocoded ? geocoded.resolvedName : locationInput;
+      } else {
+        // Reverse geocode coordinates for cached data too
+        const reverseResult = await reverseGeocodeCoordinates(locationInput.lat, locationInput.lon);
+        tempLocationName = reverseResult ? reverseResult.resolvedName : cacheKey;
       }
+      
       return { locationName: tempLocationName, forecasts: cachedEntry.data };
     }
 
@@ -150,7 +202,15 @@ export async function fetchComprehensiveWeather(
     } else {
       lat = locationInput.lat;
       lon = locationInput.lon;
-      resolvedLocationName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+      
+      // Try to reverse geocode coordinates to get human-readable location name
+      const reverseResult = await reverseGeocodeCoordinates(lat, lon);
+      if (reverseResult) {
+        resolvedLocationName = reverseResult.resolvedName;
+      } else {
+        // Fallback to coordinates if reverse geocoding fails
+        resolvedLocationName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+      }
     }
 
     // Fetch weather data from Open-Meteo
