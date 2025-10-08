@@ -26,9 +26,6 @@ export function initializeJobs() {
     } catch (error) {
       console.error('❌ Weather monitor error:', error);
     }
-  }, {
-    scheduled: true,
-    timezone: "America/New_York" // Adjust to your timezone
   });
 
   console.log('✓ Weather monitoring job scheduled (every 6 hours)');

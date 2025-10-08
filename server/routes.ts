@@ -315,20 +315,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Weather routes
   app.get("/api/weather", async (req: Request, res: Response) => {
     try {
+      // Accept both location string and coordinates
       const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
+      const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+      const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
+      
+      if (!location && (!lat || !lon)) {
+        return res.status(400).json({ message: "Location or coordinates required" });
       }
 
-      const weatherData = await fetchComprehensiveWeather(location);
+      // Prefer coordinates for accuracy
+      const locationInput = (lat && lon) ? { lat, lon } : location;
+      const weatherData = await fetchComprehensiveWeather(locationInput);
+      
       if (!weatherData) {
         return res.status(404).json({ 
           message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
         });
       }
 
-      const formattedData = formatWeatherData(weatherData);
-      return res.status(200).json(formattedData);
+      // Return consistent structure: { locationName, forecasts }
+      console.log(`Weather data retrieved for ${weatherData.locationName}: ${weatherData.forecasts.length} forecasts`);
+      return res.status(200).json(weatherData);
     } catch (err) {
       return handleApiError(err, res);
     }
@@ -526,8 +534,9 @@ How can I help with your agricultural planning today?`;
         return res.status(404).json({ message: "Conversation not found" });
       }
 
-      const { message } = z.object({
-        message: z.string()
+      const { message, location: bodyLocation } = z.object({
+        message: z.string(),
+        location: z.string().optional()
       }).parse(req.body);
 
       // Add user message
@@ -542,18 +551,28 @@ How can I help with your agricultural planning today?`;
         apiKey: process.env.OPENAI_API_KEY
       });
 
-      // Get location data for context from request headers or use default
-      const userAgent = req.headers['user-agent'] || '';
+      // Get location data for context - prefer body location, then query, then cookies, then localStorage hint
       let userLocation = 'Unknown Location';
 
-      // Try to get location from query or cookies, or use default
-      if (req.query.location) {
+      if (bodyLocation && bodyLocation.trim()) {
+        userLocation = bodyLocation.trim();
+        console.log('Using location from request body:', userLocation);
+      } else if (req.query.location) {
         userLocation = req.query.location as string;
+        console.log('Using location from query:', userLocation);
       } else if (req.cookies && req.cookies.userLocation) {
         userLocation = req.cookies.userLocation;
+        console.log('Using location from cookies:', userLocation);
       } else {
-        // Default location if not provided
-        userLocation = 'New York, USA';
+        // Try to get from localStorage (passed in headers or query)
+        const savedLocation = req.headers['x-user-location'] as string;
+        if (savedLocation) {
+          userLocation = savedLocation;
+          console.log('Using location from headers:', userLocation);
+        } else {
+          userLocation = 'New York, USA';
+          console.log('Using default location:', userLocation);
+        }
       }
 
       // Get real weather data and context directly instead of going through the API
@@ -597,22 +616,51 @@ How can I help with your agricultural planning today?`;
         }))
       };
 
-      // Prepare messages for API
+      // Prepare messages for API with enhanced weather context
+      let weatherContextMessage = '';
+      if (contextData.weather && weatherData && weatherData.forecasts.length > 0) {
+        const current = weatherData.forecasts[0];
+        const next7Days = weatherData.forecasts.slice(0, 8);
+        
+        weatherContextMessage = `
+
+## CURRENT WEATHER CONDITIONS
+Location: ${weatherData.locationName}
+Temperature: ${current.temperature}°F (feels like ${current.feels_like}°F)
+Conditions: ${current.weatherDescription}
+Humidity: ${current.humidity}%
+Wind Speed: ${current.wind} mph
+Precipitation Chance: ${current.precipitation}%${current.uv_index ? `
+UV Index: ${current.uv_index}` : ''}${current.pressure ? `
+Pressure: ${current.pressure} mb` : ''}
+
+## 7-DAY DETAILED FORECAST
+${next7Days.map((day, idx) => `${idx === 0 ? 'Today' : day.dayOfWeek} (${day.date}):
+  - High/Low: ${day.temp_max}°F / ${day.temp_min}°F
+  - Conditions: ${day.weatherDescription}
+  - Precipitation: ${day.precipitation}%
+  - Wind: ${day.wind} mph${day.uv_index ? `
+  - UV Index: ${day.uv_index}` : ''}`).join('\n\n')}
+
+## AGRICULTURAL CONSIDERATIONS
+IMPORTANT: Use this weather data to provide context-aware agricultural recommendations:
+- Temperature extremes: Frost risk at <32°F, heat stress at >95°F
+- Precipitation timing: Critical for planting, irrigation scheduling, and harvesting
+- Wind conditions: Important for spraying operations (avoid >15 mph), plant support
+- Humidity levels: High humidity increases disease risk; low humidity requires more irrigation
+- UV index: Affects sun-sensitive crops and worker safety${current.temperature < 40 ? `
+- ⚠️ FROST ALERT: Current temperature ${current.temperature}°F is near or below frost threshold` : ''}${current.temperature > 90 ? `
+- ⚠️ HEAT ALERT: Current temperature ${current.temperature}°F requires additional irrigation` : ''}${current.precipitation > 70 ? `
+- ⚠️ RAIN ALERT: ${current.precipitation}% chance of rain - consider rescheduling outdoor activities` : ''}${current.wind > 15 ? `
+- ⚠️ WIND ALERT: ${current.wind} mph winds - avoid spraying and check plant supports` : ''}`;
+      }
+
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
 
-Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
-Current season: ${contextData.season}
-User location: ${contextData.location}
-${contextData.weather ? `
-Current weather: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
-Humidity: ${contextData.weather.current.humidity}%
-Wind: ${contextData.weather.current.wind} mph
-
-Weather forecast for the next ${contextData.weather.forecast.length} days:
-${contextData.weather.forecast.map((day: any, index: number) => 
-  `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
-).join('\n')}
-` : ''}
+## CURRENT CONTEXT
+Date and Time: ${new Date(contextData.timestamp).toLocaleString()}
+Season: ${contextData.season}
+User Location: ${contextData.location}${weatherContextMessage}
 ${contextData.events && contextData.events.length > 0 ? `
 Upcoming calendar events:
 ${contextData.events.slice(0, 5).map(event => {

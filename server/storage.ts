@@ -615,7 +615,12 @@ export class MemStorage implements IStorage {
       location: insertEvent.location || null,
       checkWeather: insertEvent.checkWeather || null,
       isRecurring: insertEvent.isRecurring || null,
-      recurringPattern: insertEvent.recurringPattern || null
+      recurringPattern: insertEvent.recurringPattern || null,
+      instructions: insertEvent.instructions || null,
+      materials: insertEvent.materials || null,
+      researchLinks: insertEvent.researchLinks || null,
+      notes: insertEvent.notes || null,
+      imageUrls: insertEvent.imageUrls || null
     };
     this.events.set(id, event);
     return event;
