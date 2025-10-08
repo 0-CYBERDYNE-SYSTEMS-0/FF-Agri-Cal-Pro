@@ -24,10 +24,13 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Download, Calendar, AlertCircle, Info, MessageCircle, X } from "lucide-react";
 import { useLocation } from "@/contexts/LocationContext";
 import { locationService } from "@/lib/locationService";
+import MessageInput from "@/components/assistant/MessageInput";
+import ImageMessage from "@/components/assistant/ImageMessage";
 
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
+  imageUrls?: string[];
 }
 
 export default function ChatInterface() {
@@ -143,13 +146,14 @@ export default function ChatInterface() {
   
   // Send message mutation
   const sendMessageMutation = useMutation({
-    mutationFn: async ({ conversationId, message }: { conversationId: number, message: string }) => {
+    mutationFn: async ({ conversationId, message, imageUrls }: { conversationId: number, message: string, imageUrls?: string[] }) => {
       // Handle location-independent mode
       const locationToSend = locationIndependentMode ? null : userLocation;
       
       const response = await apiRequest("POST", `/api/conversations/${conversationId}/messages`, { 
         message,
-        location: locationToSend // Include user's location only if not in independent mode
+        location: locationToSend, // Include user's location only if not in independent mode
+        imageUrls // Include image URLs if provided
       });
       return response.json();
     },
@@ -498,14 +502,16 @@ Wind: ${contextData.weather.current.wind} mph
     }
   };
   
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!input.trim() || !conversationId) return;
+  const handleSendMessage = async (message: string, imageUrls?: string[]) => {
+    if (!conversationId) return;
+    if (!message.trim() && (!imageUrls || imageUrls.length === 0)) return;
     
     try {
-      await sendMessageMutation.mutateAsync({ conversationId, message: input });
-      setInput("");
+      await sendMessageMutation.mutateAsync({ 
+        conversationId, 
+        message: message || (imageUrls && imageUrls.length > 0 ? "[Image]" : ""),
+        imageUrls 
+      });
     } catch (error) {
       console.error("Error sending message:", error);
     }
@@ -633,13 +639,24 @@ Wind: ${contextData.weather.current.wind} mph
                       ? "mr-2 bg-primary text-white" 
                       : "ml-2 bg-white border border-gray-200"
                   } rounded-lg p-3 max-w-[75%] shadow-sm`}>
-                    {message.role === "user" ? (
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    ) : (
-                      <MarkdownRenderer 
-                        content={message.content} 
-                        className={`text-sm ${message.role === "assistant" ? "text-neutral-800" : "text-white"}`}
-                      />
+                    {/* Show images if present */}
+                    {message.imageUrls && message.imageUrls.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {message.imageUrls.map((url, idx) => (
+                          <ImageMessage key={idx} imageUrl={url} />
+                        ))}
+                      </div>
+                    )}
+                    {/* Show text content */}
+                    {message.content && message.content !== "[Image]" && (
+                      message.role === "user" ? (
+                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      ) : (
+                        <MarkdownRenderer 
+                          content={message.content} 
+                          className={`text-sm ${message.role === "assistant" ? "text-neutral-800" : "text-white"}`}
+                        />
+                      )
                     )}
                   </div>
                   
@@ -686,27 +703,11 @@ Wind: ${contextData.weather.current.wind} mph
             </Button>
           </div>
         
-          <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200 flex-shrink-0">
-          <div className="flex space-x-2">
-            <Input
-              type="text"
-              placeholder="Type your message... (Markdown supported)"
-              className="flex-1 py-2 px-4 border border-neutral-300 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={sendMessageMutation.isPending || isLoadingActiveConversation || !conversationId}
-            />
-            <Button 
-              type="submit"
-              className="p-2 bg-primary text-white rounded-full hover:bg-primary-dark transition"
-              disabled={sendMessageMutation.isPending || isLoadingActiveConversation || !conversationId || !input.trim()}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z" clipRule="evenodd" />
-              </svg>
-            </Button>
-          </div>
-          </form>
+          <MessageInput
+            onSendMessage={handleSendMessage}
+            disabled={sendMessageMutation.isPending || isLoadingActiveConversation || !conversationId}
+            conversationId={conversationId || undefined}
+          />
           
           {/* Location mode indicator */}
           <div className="px-4 py-2 border-t border-neutral-200 bg-gray-50 flex items-center justify-between flex-shrink-0">
