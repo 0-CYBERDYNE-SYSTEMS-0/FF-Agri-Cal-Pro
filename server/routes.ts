@@ -2,13 +2,14 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast } from "@shared/schema";
+import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, insertImageSchema, WeatherForecast } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
 import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
 import { eq } from "drizzle-orm";
 import { events, Event } from "@shared/schema";
+import { upload, getImageUrl } from "./middleware/upload";
 
 // Helper function to determine the current season based on date
 function getSeasonForDate(date: Date): string {
@@ -2012,6 +2013,83 @@ For deleting events, you only need the event ID`;
       }
       
       return res.status(200).json({ message: "Image deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Image upload endpoint with GPT-4 Vision support
+  app.post("/api/images/upload", upload.single('image'), async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No image file provided" });
+      }
+
+      const userId = 1; // Default demo user
+      const { eventId, conversationId, analyzeWithAI } = req.body;
+
+      const imageUrl = getImageUrl(req.file.filename);
+      
+      let aiAnalysis = null;
+      
+      // If AI analysis requested, use GPT-4 Vision
+      if (analyzeWithAI === 'true') {
+        try {
+          const OpenAI = await import("openai");
+          const openai = new OpenAI.default({
+            apiKey: process.env.OPENAI_API_KEY
+          });
+
+          const fullUrl = `${req.protocol}://${req.get('host')}${imageUrl}`;
+          
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "You are an agricultural expert. Analyze this image and provide: 1) What you see (crop, plant, equipment, etc.), 2) Any issues or diseases visible, 3) Recommendations for the farmer. Be specific and actionable."
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: fullUrl
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 500
+          });
+
+          aiAnalysis = {
+            analysis: response.choices[0].message.content,
+            model: "gpt-4o",
+            timestamp: new Date().toISOString()
+          };
+        } catch (aiError) {
+          console.error("AI analysis error:", aiError);
+          // Continue without AI analysis if it fails
+        }
+      }
+
+      const imageData = {
+        userId,
+        eventId: eventId ? parseInt(eventId) : undefined,
+        conversationId: conversationId ? parseInt(conversationId) : undefined,
+        filename: req.file.filename,
+        url: imageUrl,
+        mimeType: req.file.mimetype,
+        fileSize: req.file.size,
+        aiAnalysis
+      };
+
+      const validatedImage = insertImageSchema.parse(imageData);
+      const savedImage = await storage.createImage(validatedImage);
+
+      return res.status(201).json(savedImage);
     } catch (err) {
       return handleApiError(err, res);
     }
