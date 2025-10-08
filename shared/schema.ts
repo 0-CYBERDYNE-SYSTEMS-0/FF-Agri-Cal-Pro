@@ -27,7 +27,7 @@ export const projects = pgTable("projects", {
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
-// Calendar event table
+// Calendar event table (enhanced with rich content fields)
 export const events = pgTable("events", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
@@ -41,6 +41,12 @@ export const events = pgTable("events", {
   checkWeather: boolean("check_weather").default(false),
   isRecurring: boolean("is_recurring").default(false),
   recurringPattern: json("recurring_pattern"),
+  // Rich content fields for detailed instructions and planning
+  instructions: text("instructions"), // Markdown-formatted step-by-step instructions
+  materials: json("materials"), // Array of Material objects (name, quantity, checked)
+  researchLinks: json("research_links"), // Array of ResearchLink objects
+  notes: text("notes"), // Additional free-form notes
+  imageUrls: json("image_urls"), // Array of image URLs attached to this event
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
@@ -92,6 +98,36 @@ export const userDocuments = pgTable("user_documents", {
   updatedAt: timestamp("updated_at").defaultNow().notNull()
 });
 
+// Notifications table for system alerts and reminders
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  eventId: integer("event_id").references(() => events.id),
+  type: text("type").notNull(), // weather_alert, reminder, suggestion
+  severity: text("severity").notNull(), // info, warning, critical
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  icon: text("icon"), // Emoji or icon name
+  suggestedActions: json("suggested_actions"), // Array of QuickAction objects
+  isRead: boolean("is_read").default(false).notNull(),
+  dismissed: boolean("dismissed").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Images table for photo storage and AI analysis
+export const images = pgTable("images", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  eventId: integer("event_id").references(() => events.id),
+  conversationId: integer("conversation_id").references(() => conversations.id),
+  filename: text("filename").notNull(),
+  url: text("url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  aiAnalysis: json("ai_analysis"), // GPT-4 Vision results
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull()
+});
+
 // Schema validation
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -123,7 +159,12 @@ export const insertEventSchema = createInsertSchema(events).pick({
   location: true,
   checkWeather: true,
   isRecurring: true,
-  recurringPattern: true
+  recurringPattern: true,
+  instructions: true,
+  materials: true,
+  researchLinks: true,
+  notes: true,
+  imageUrls: true
 });
 
 export const insertConversationSchema = createInsertSchema(conversations).pick({
@@ -154,6 +195,28 @@ export const insertUserDocumentSchema = createInsertSchema(userDocuments).pick({
   isPublic: true
 });
 
+export const insertNotificationSchema = createInsertSchema(notifications).pick({
+  userId: true,
+  eventId: true,
+  type: true,
+  severity: true,
+  title: true,
+  message: true,
+  icon: true,
+  suggestedActions: true
+});
+
+export const insertImageSchema = createInsertSchema(images).pick({
+  userId: true,
+  eventId: true,
+  conversationId: true,
+  filename: true,
+  url: true,
+  mimeType: true,
+  fileSize: true,
+  aiAnalysis: true
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -172,6 +235,35 @@ export type InsertUserFile = z.infer<typeof insertUserFileSchema>;
 
 export type UserDocument = typeof userDocuments.$inferSelect;
 export type InsertUserDocument = z.infer<typeof insertUserDocumentSchema>;
+
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type Image = typeof images.$inferSelect;
+export type InsertImage = z.infer<typeof insertImageSchema>;
+
+// Material type for event materials checklist
+export interface Material {
+  name: string;
+  quantity?: string;
+  checked: boolean;
+}
+
+// Research link type for event research references
+export interface ResearchLink {
+  url: string;
+  title?: string;
+  description?: string;
+}
+
+// Quick action type for notification actions
+export interface QuickAction {
+  id: string;
+  label: string;
+  action: "reschedule" | "dismiss" | "view_event" | "view_forecast" | "custom";
+  primary?: boolean;
+  data?: any;
+}
 
 // Weather forecast type
 export type WeatherForecast = {

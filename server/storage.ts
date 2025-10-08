@@ -1,4 +1,4 @@
-import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, WeatherForecast } from "@shared/schema";
+import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, notifications, type Notification, type InsertNotification, images, type Image, type InsertImage, WeatherForecast } from "@shared/schema";
 
 export interface IStorage {
   // User methods
@@ -46,6 +46,23 @@ export interface IStorage {
   updateUserDocument(id: number, document: Partial<UserDocument>): Promise<UserDocument | undefined>;
   deleteUserDocument(id: number): Promise<boolean>;
 
+  // Notification methods
+  getNotification(id: number): Promise<Notification | undefined>;
+  getNotificationsByUser(userId: number): Promise<Notification[]>;
+  getUnreadNotificationsByUser(userId: number): Promise<Notification[]>;
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  markNotificationAsRead(id: number): Promise<Notification | undefined>;
+  dismissNotification(id: number): Promise<boolean>;
+  deleteNotification(id: number): Promise<boolean>;
+
+  // Image methods
+  getImage(id: number): Promise<Image | undefined>;
+  getImagesByUser(userId: number): Promise<Image[]>;
+  getImagesByEvent(eventId: number): Promise<Image[]>;
+  getImagesByConversation(conversationId: number): Promise<Image[]>;
+  createImage(image: InsertImage): Promise<Image>;
+  deleteImage(id: number): Promise<boolean>;
+
   // Storage interface intentionally doesn't include weather functions
   // as weather data comes directly from the OpenWeatherAPI
 }
@@ -57,12 +74,16 @@ export class MemStorage implements IStorage {
   private conversations: Map<number, Conversation>;
   private userFiles: Map<number, UserFile>;
   private userDocuments: Map<number, UserDocument>;
+  private notifications: Map<number, Notification>;
+  private images: Map<number, Image>;
   private currentUserId: number;
   private currentProjectId: number;
   private currentEventId: number;
   private currentConversationId: number;
   private currentUserFileId: number;
   private currentUserDocumentId: number;
+  private currentNotificationId: number;
+  private currentImageId: number;
 
   constructor() {
     this.users = new Map();
@@ -71,12 +92,16 @@ export class MemStorage implements IStorage {
     this.conversations = new Map();
     this.userFiles = new Map();
     this.userDocuments = new Map();
+    this.notifications = new Map();
+    this.images = new Map();
     this.currentUserId = 1;
     this.currentProjectId = 1;
     this.currentEventId = 1;
     this.currentConversationId = 1;
     this.currentUserFileId = 1;
     this.currentUserDocumentId = 1;
+    this.currentNotificationId = 1;
+    this.currentImageId = 1;
 
     // Initialize with sample data
     this.initSampleData().catch(error => {
@@ -742,6 +767,102 @@ export class MemStorage implements IStorage {
 
   async deleteUserDocument(id: number): Promise<boolean> {
     return this.userDocuments.delete(id);
+  }
+
+  // Notification methods
+  async getNotification(id: number): Promise<Notification | undefined> {
+    return this.notifications.get(id);
+  }
+
+  async getNotificationsByUser(userId: number): Promise<Notification[]> {
+    return Array.from(this.notifications.values())
+      .filter((notif) => notif.userId === userId && !notif.dismissed)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getUnreadNotificationsByUser(userId: number): Promise<Notification[]> {
+    return Array.from(this.notifications.values())
+      .filter((notif) => notif.userId === userId && !notif.isRead && !notif.dismissed)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async createNotification(insertNotification: InsertNotification): Promise<Notification> {
+    const id = this.currentNotificationId++;
+    const notification: Notification = {
+      ...insertNotification,
+      id,
+      eventId: insertNotification.eventId || null,
+      icon: insertNotification.icon || null,
+      suggestedActions: insertNotification.suggestedActions || null,
+      isRead: false,
+      dismissed: false,
+      createdAt: new Date()
+    };
+    this.notifications.set(id, notification);
+    return notification;
+  }
+
+  async markNotificationAsRead(id: number): Promise<Notification | undefined> {
+    const notification = this.notifications.get(id);
+    if (!notification) return undefined;
+
+    const updatedNotification = { ...notification, isRead: true };
+    this.notifications.set(id, updatedNotification);
+    return updatedNotification;
+  }
+
+  async dismissNotification(id: number): Promise<boolean> {
+    const notification = this.notifications.get(id);
+    if (!notification) return false;
+
+    const updatedNotification = { ...notification, dismissed: true };
+    this.notifications.set(id, updatedNotification);
+    return true;
+  }
+
+  async deleteNotification(id: number): Promise<boolean> {
+    return this.notifications.delete(id);
+  }
+
+  // Image methods
+  async getImage(id: number): Promise<Image | undefined> {
+    return this.images.get(id);
+  }
+
+  async getImagesByUser(userId: number): Promise<Image[]> {
+    return Array.from(this.images.values())
+      .filter((img) => img.userId === userId)
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+  }
+
+  async getImagesByEvent(eventId: number): Promise<Image[]> {
+    return Array.from(this.images.values())
+      .filter((img) => img.eventId === eventId)
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+  }
+
+  async getImagesByConversation(conversationId: number): Promise<Image[]> {
+    return Array.from(this.images.values())
+      .filter((img) => img.conversationId === conversationId)
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+  }
+
+  async createImage(insertImage: InsertImage): Promise<Image> {
+    const id = this.currentImageId++;
+    const image: Image = {
+      ...insertImage,
+      id,
+      eventId: insertImage.eventId || null,
+      conversationId: insertImage.conversationId || null,
+      aiAnalysis: insertImage.aiAnalysis || null,
+      uploadedAt: new Date()
+    };
+    this.images.set(id, image);
+    return image;
+  }
+
+  async deleteImage(id: number): Promise<boolean> {
+    return this.images.delete(id);
   }
 
   // Weather functionality removed in favor of OpenWeather API
