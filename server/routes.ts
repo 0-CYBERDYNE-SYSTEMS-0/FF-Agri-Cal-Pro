@@ -536,7 +536,7 @@ How can I help with your agricultural planning today?`;
 
       const { message, location: bodyLocation } = z.object({
         message: z.string(),
-        location: z.string().optional()
+        location: z.string().nullable().optional()  // Accept null, undefined, or string
       }).parse(req.body);
 
       // Add user message
