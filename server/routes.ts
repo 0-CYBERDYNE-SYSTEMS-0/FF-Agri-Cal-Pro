@@ -1865,6 +1865,158 @@ For deleting events, you only need the event ID`;
     }
   });
 
+  // Notification routes
+  app.get("/api/notifications", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const notifications = await storage.getNotificationsByUser(userId);
+      return res.status(200).json(notifications);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/unread", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const unreadNotifications = await storage.getUnreadNotificationsByUser(userId);
+      return res.status(200).json(unreadNotifications);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/unread/count", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const unreadNotifications = await storage.getUnreadNotificationsByUser(userId);
+      return res.status(200).json({ count: unreadNotifications.length });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const notification = await storage.getNotification(id);
+      
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json(notification);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/notifications/:id/read", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const notification = await storage.markNotificationAsRead(id);
+      
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json(notification);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/notifications/:id/dismiss", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const dismissed = await storage.dismissNotification(id);
+      
+      if (!dismissed) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json({ message: "Notification dismissed" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/notifications/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteNotification(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json({ message: "Notification deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Image routes
+  app.get("/api/images", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const images = await storage.getImagesByUser(userId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/event/:eventId", async (req: Request, res: Response) => {
+    try {
+      const eventId = parseInt(req.params.eventId);
+      const images = await storage.getImagesByEvent(eventId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/conversation/:conversationId", async (req: Request, res: Response) => {
+    try {
+      const conversationId = parseInt(req.params.conversationId);
+      const images = await storage.getImagesByConversation(conversationId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const image = await storage.getImage(id);
+      
+      if (!image) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+      
+      return res.status(200).json(image);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/images/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteImage(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+      
+      return res.status(200).json({ message: "Image deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
   // Create HTTP server
   const httpServer = createServer(app);
 
