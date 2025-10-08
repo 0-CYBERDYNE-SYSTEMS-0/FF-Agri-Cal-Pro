@@ -40,7 +40,7 @@ export default function Calendar() {
   });
 
   // Use the useWeather hook which properly handles location updates
-  const { weatherData, isLoading: isLoadingWeather } = useWeather(location || undefined);
+  const { weatherData, isLoading: isLoadingWeather, resolvedLocationName } = useWeather(location || undefined);
 
   // Render the appropriate calendar view based on the current view state
   // Using useMemo to ensure the view only re-renders when necessary
@@ -110,6 +110,7 @@ export default function Calendar() {
           forecasts={weatherData} 
           isLoading={isLoadingWeather}
           location={location}
+          resolvedLocationName={resolvedLocationName}
           vertical={true} // New prop for vertical layout
         />
       </div>

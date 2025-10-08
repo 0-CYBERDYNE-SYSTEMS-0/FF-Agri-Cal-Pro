@@ -219,6 +219,9 @@ export async function fetchComprehensiveWeather(
       latitude: lat,
       longitude: lon,
       current_weather: true,
+      temperature_unit: 'fahrenheit',  // Request Fahrenheit instead of Celsius
+      windspeed_unit: 'mph',           // Request mph instead of km/h
+      precipitation_unit: 'inch',      // Request inches instead of mm
       daily: 'weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,uv_index_max',
       hourly: 'apparent_temperature,relativehumidity_2m,precipitation,surface_pressure,visibility,uv_index,weathercode',
       timezone: 'auto',
