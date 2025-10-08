@@ -7,6 +7,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Conversation, Project, Event, WeatherForecast } from "@shared/schema";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   detectCalendarEventsInAIMessage, 
   AICalendarEvent, 
@@ -18,7 +21,7 @@ import {
   createCalendarEvent
 } from "@/lib/calendarService";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { Download, Calendar, AlertCircle, Info } from "lucide-react";
+import { Download, Calendar, AlertCircle, Info, MessageCircle, X } from "lucide-react";
 import { useLocation } from "@/contexts/LocationContext";
 import { locationService } from "@/lib/locationService";
 
@@ -291,6 +294,17 @@ export default function ChatInterface() {
     queryKey: ["/api/events"],
     enabled: isOpen,
   });
+
+  // Get unread notification count for badge
+  const { data: unreadCount = 0 } = useQuery<number>({
+    queryKey: ["/api/notifications/unread/count"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/notifications/unread/count");
+      const data = await response.json();
+      return data.count || 0;
+    },
+    refetchInterval: 30000, // Check every 30 seconds
+  });
   
   // Get comprehensive context data for the assistant
   const locationToUse = userLocation || "";
@@ -499,16 +513,22 @@ Wind: ${contextData.weather.current.wind} mph
 
   return (
     <>
-      {/* Fixed chat button at the bottom right */}
+      {/* Fixed chat button at the bottom right with notification badge */}
       <div className="fixed bottom-6 right-6 z-50">
         <Button 
           id="chat-button"
           onClick={toggleChat}
-          className="flex items-center justify-center h-14 w-14 rounded-full bg-primary text-white shadow-lg hover:bg-primary-dark transition"
+          className="relative flex items-center justify-center h-14 w-14 rounded-full bg-primary text-white shadow-lg hover:bg-primary/90 transition"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
+          <MessageCircle className="h-6 w-6" />
+          {unreadCount > 0 && (
+            <Badge 
+              variant="destructive"
+              className="absolute -top-1 -right-1 h-6 w-6 flex items-center justify-center p-0 text-xs"
+            >
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </Badge>
+          )}
         </Button>
       </div>
       
@@ -578,25 +598,20 @@ Wind: ${contextData.weather.current.wind} mph
         </DialogContent>
       </Dialog>
       
-      {/* Chat popup */}
-      <div 
-        id="chat-popup" 
-        className={`${isOpen ? 'block' : 'hidden'} fixed bottom-28 right-6 w-80 md:w-96 bg-white rounded-lg shadow-2xl overflow-hidden z-50 max-h-[70vh] flex flex-col border border-gray-200`}
-      >
-        <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-primary text-white">
-          <h3 className="font-medium">Farm Friend</h3>
-          <button 
-            id="close-chat" 
-            className="text-white hover:text-neutral-200 transition"
-            onClick={toggleChat}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
-        </div>
+      {/* Mobile-First Drawer Chat Interface */}
+      <Drawer open={isOpen} onOpenChange={setIsOpen}>
+        <DrawerContent className="h-[85vh] flex flex-col">
+          <DrawerHeader className="border-b bg-primary text-white flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <DrawerTitle className="text-white">Farm Friend</DrawerTitle>
+              <DrawerClose className="text-white hover:text-neutral-200">
+                <X className="h-5 w-5" />
+              </DrawerClose>
+            </div>
+          </DrawerHeader>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
+          <ScrollArea className="flex-1 p-4">
+            <div className="space-y-4" id="chat-messages">
           {isLoadingActiveConversation ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"></div>
@@ -654,23 +669,24 @@ Wind: ${contextData.weather.current.wind} mph
               <div ref={messagesEndRef} />
             </>
           )}
-        </div>
+            </div>
+          </ScrollArea>
         
-        {/* Download Calendar Button */}
-        <div className="flex justify-end px-4 py-2">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="text-neutral-500 hover:text-primary" 
-            onClick={() => downloadCalendarAsICS(events, 'farm-calendar.ics')}
-            title="Download Calendar"
-          >
-            <Download className="h-4 w-4 mr-1" />
-            <span className="text-xs">Export Calendar</span>
-          </Button>
-        </div>
+          {/* Download Calendar Button */}
+          <div className="flex justify-end px-4 py-2 border-t flex-shrink-0">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-neutral-500 hover:text-primary" 
+              onClick={() => downloadCalendarAsICS(events, 'farm-calendar.ics')}
+              title="Download Calendar"
+            >
+              <Download className="h-4 w-4 mr-1" />
+              <span className="text-xs">Export Calendar</span>
+            </Button>
+          </div>
         
-        <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200">
+          <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-200 flex-shrink-0">
           <div className="flex space-x-2">
             <Input
               type="text"
@@ -690,10 +706,10 @@ Wind: ${contextData.weather.current.wind} mph
               </svg>
             </Button>
           </div>
-        </form>
-        
-        {/* Location mode indicator */}
-        <div className="px-4 py-2 border-t border-neutral-200 bg-gray-50 flex items-center justify-between">
+          </form>
+          
+          {/* Location mode indicator */}
+          <div className="px-4 py-2 border-t border-neutral-200 bg-gray-50 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center space-x-2">
             {locationIndependentMode ? (
               <>
@@ -722,8 +738,9 @@ Wind: ${contextData.weather.current.wind} mph
           >
             Toggle Mode
           </Button>
-        </div>
-      </div>
+          </div>
+        </DrawerContent>
+      </Drawer>
       
       {/* Location Mode Selection Modal */}
       <Dialog open={showLocationModal} onOpenChange={setShowLocationModal}>
