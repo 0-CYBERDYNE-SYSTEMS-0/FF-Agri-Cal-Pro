@@ -1,0 +1,150 @@
+
+> rest-express@1.0.0 dev
+> npm run server & npm run client:dev
+
+
+> rest-express@1.0.0 client:dev
+> cd client && npx vite --port 5001
+
+
+> rest-express@1.0.0 server
+> tsx server/index.ts
+
+Port 5001 is in use, trying another one...
+
+  VITE v5.4.14  ready in 139 ms
+
+  ➜  Local:   http://localhost:5002/
+  ➜  Network: use --host to expose
+🚀 Initializing scheduled jobs...
+✓ Weather monitoring job scheduled (every 6 hours)
+Environment: development
+Available environment variables: [
+  'TERM_PROGRAM',
+  'NODE',
+  'PYENV_ROOT',
+  'INIT_CWD',
+  'TERM',
+  'SHELL',
+  'HOMEBREW_REPOSITORY',
+  'TMPDIR',
+  'npm_config_global_prefix',
+  'PYTHONUNBUFFERED',
+  'TERM_PROGRAM_VERSION',
+  'COLOR',
+  'npm_config_noproxy',
+  'npm_config_local_prefix',
+  'USER',
+  'OPENAI_API_KEY',
+  'COMMAND_MODE',
+  'npm_config_globalconfig',
+  'SSH_AUTH_SOCK',
+  '__CF_USER_TEXT_ENCODING',
+  'npm_execpath',
+  'OPENWEATHER_API_KEY',
+  'WEZTERM_EXECUTABLE_DIR',
+  'PATH',
+  'OLLAMA_ORIGINS',
+  '_',
+  'npm_package_json',
+  '__CFBundleIdentifier',
+  'npm_config_init_module',
+  'npm_config_userconfig',
+  'PWD',
+  'npm_command',
+  'OPENROUTER_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'EDITOR',
+  'npm_lifecycle_event',
+  'LANG',
+  'npm_package_name',
+  'WEZTERM_PANE',
+  'XPC_FLAGS',
+  'npm_config_npm_version',
+  'npm_config_node_gyp',
+  'XPC_SERVICE_NAME',
+  'WEZTERM_UNIX_SOCKET',
+  'npm_package_version',
+  'PYENV_SHELL',
+  'SHLVL',
+  'HOME',
+  'ATUIN_HISTORY_ID',
+  'HOMEBREW_PREFIX',
+  'WEZTERM_CONFIG_DIR',
+  'LOGNAME',
+  'npm_config_cache',
+  'ATUIN_SESSION',
+  'npm_lifecycle_script',
+  'DEBIAN_FRONTEND',
+  'npm_config_user_agent',
+  'INFOPATH',
+  'HOMEBREW_CELLAR',
+  'WEZTERM_EXECUTABLE',
+  'DATABASE_URL',
+  'WEZTERM_CONFIG_FILE',
+  'SESSION_SECRET',
+  'COLORTERM',
+  'npm_config_prefix',
+  'npm_node_execpath',
+  'NODE_ENV'
+]
+Starting server on port: 3000
+10:57:21 AM [express] serving on port 3000
+Server is running at http://localhost:3000
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Reverse geocoding coordinates: 44.17243687753259, -122.22043327703715
+10:57:22 AM [express] GET /api/events 200 in 1ms :: [{"userId":1,"projectId":1,"title":"Soil Preparat…
+10:57:22 AM [express] GET /api/projects 200 in 0ms :: [{"userId":1,"name":"Summer Vegetable Garden","…
+10:57:22 AM [express] GET /api/notifications/unread/count 304 in 0ms :: {"count":0}
+Reverse geocoded to: Lane County, Oregon
+Fetching fresh weather data for Lane County, Oregon (44.17243687753259, -122.22043327703715)
+Weather data processed for Lane County, Oregon
+Weather data retrieved for Lane County, Oregon: 7 forecasts
+10:57:24 AM [express] GET /api/weather 200 in 1651ms :: {"locationName":"Lane County, Oregon","foreca…
+Reverse geocoding coordinates: 45.5152, -122.6784
+Reverse geocoded to: Portland, Oregon
+Fetching fresh weather data for Portland, Oregon (45.5152, -122.6784)
+Weather data processed for Portland, Oregon
+Weather data retrieved for Portland, Oregon: 7 forecasts
+10:57:37 AM [express] GET /api/weather 200 in 1254ms :: {"locationName":"Portland, Oregon","forecasts…
+Reverse geocoding coordinates: 40.7128, -74.006
+Reverse geocoded to: City of New York, New York
+Fetching fresh weather data for City of New York, New York (40.7128, -74.006)
+Weather data processed for City of New York, New York
+Weather data retrieved for City of New York, New York: 7 forecasts
+10:57:50 AM [express] GET /api/weather 200 in 1865ms :: {"locationName":"City of New York, New York",…
+Reverse geocoding coordinates: 44.0521, -123.0868
+Reverse geocoded to: Eugene, Oregon
+Fetching fresh weather data for Eugene, Oregon (44.0521, -123.0868)
+Weather data processed for Eugene, Oregon
+Weather data retrieved for Eugene, Oregon: 7 forecasts
+10:57:50 AM [express] GET /api/weather 200 in 336ms :: {"locationName":"Eugene, Oregon","forecasts":[…
+Reverse geocoding coordinates: 47.6062, -122.3321
+Reverse geocoded to: Seattle, Washington
+Fetching fresh weather data for Seattle, Washington (47.6062, -122.3321)
+Weather data processed for Seattle, Washington
+Weather data retrieved for Seattle, Washington: 7 forecasts
+10:57:51 AM [express] GET /api/weather 200 in 1338ms :: {"locationName":"Seattle, Washington","foreca…
+10:57:52 AM [express] GET /api/notifications/unread/count 304 in 2ms :: {"count":0}
+10:58:22 AM [express] GET /api/notifications/unread/count 304 in 2ms :: {"count":0}
+10:58:52 AM [express] GET /api/notifications/unread/count 304 in 2ms :: {"count":0}
+10:59:22 AM [express] GET /api/notifications/unread/count 304 in 1ms :: {"count":0}
+Using cached weather data for 44.17243687753259,-122.22043327703715
+Reverse geocoding coordinates: 44.17243687753259, -122.22043327703715
+10:59:47 AM [express] GET /api/projects 304 in 0ms :: [{"userId":1,"name":"Summer Vegetable Garden","…
+10:59:47 AM [express] GET /api/events 304 in 0ms :: [{"userId":1,"projectId":1,"title":"Soil Preparat…
+10:59:47 AM [express] GET /api/notifications/unread/count 304 in 0ms :: {"count":0}
+Reverse geocoded to: Lane County, Oregon
+Weather data retrieved for Lane County, Oregon: 7 forecasts
+10:59:48 AM [express] GET /api/weather 304 in 276ms :: {"locationName":"Lane County, Oregon","forecas…
+Using cached weather data for 44.17243687753259,-122.22043327703715
+Reverse geocoding coordinates: 44.17243687753259, -122.22043327703715
+10:59:53 AM [express] GET /api/events 304 in 1ms :: [{"userId":1,"projectId":1,"title":"Soil Preparat…
+10:59:53 AM [express] GET /api/projects 304 in 0ms :: [{"userId":1,"name":"Summer Vegetable Garden","…
+10:59:53 AM [express] GET /api/notifications/unread/count 304 in 0ms :: {"count":0}
+Reverse geocoded to: Lane County, Oregon
+Weather data retrieved for Lane County, Oregon: 7 forecasts
+10:59:54 AM [express] GET /api/weather 304 in 424ms :: {"locationName":"Lane County, Oregon","forecas…
+11:00:23 AM [express] GET /api/notifications/unread/count 304 in 1ms :: {"count":0}

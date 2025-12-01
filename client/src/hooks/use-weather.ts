@@ -27,26 +27,48 @@ export function useWeather(location?: string) {
         throw new Error("No location available for weather data");
       }
       
-      // Prepare the API request to our backend endpoint
-      let endpoint = '/api/weather';
-      let params = {};
+      let params: any = {};
       
-      // Check if location is coordinates or string
-      const coordPattern = /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/;
-      if (coordPattern.test(effectiveLocation)) {
-        // Extract coordinates
-        const [lat, lon] = effectiveLocation.split(',').map(x => parseFloat(x.trim()));
-        params = { lat, lon };
-      } else {
-        // Use as location name
-        params = { location: effectiveLocation };
+      // Check if we have validated location with coordinates in localStorage
+      const validatedLocationStr = localStorage.getItem("validatedLocation");
+      if (validatedLocationStr) {
+        try {
+          const validatedLocation = JSON.parse(validatedLocationStr);
+          // Prefer coordinates for accuracy
+          if (validatedLocation.coordinates) {
+            params = {
+              lat: validatedLocation.coordinates.lat,
+              lon: validatedLocation.coordinates.lon
+            };
+            console.log('Using validated coordinates for weather:', params);
+          }
+        } catch (err) {
+          console.warn('Failed to parse validated location:', err);
+        }
       }
       
-      // Make request to our backend API
-      const response = await axios.get(endpoint, { params });
+      // Fallback to location string if no coordinates
+      if (!params.lat || !params.lon) {
+        // Check if effectiveLocation is coordinates string
+        const coordPattern = /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/;
+        if (coordPattern.test(effectiveLocation)) {
+          const [lat, lon] = effectiveLocation.split(',').map(x => parseFloat(x.trim()));
+          params = { lat, lon };
+        } else {
+          params = { location: effectiveLocation };
+        }
+      }
       
-      // Return the forecasts array from our API response
-      return response.data.forecasts || [];
+      console.log('Fetching weather with params:', params);
+      const response = await axios.get('/api/weather', { params });
+      
+      // Server now returns { locationName, forecasts }
+      if (!response.data || !response.data.forecasts) {
+        throw new Error('Invalid weather data received from server');
+      }
+      
+      console.log(`Weather data received: ${response.data.forecasts.length} forecasts for ${response.data.locationName}`);
+      return response.data;
     },
     staleTime: 10 * 60 * 1000,
     retry: 1,
@@ -54,13 +76,15 @@ export function useWeather(location?: string) {
   });
   
   // Extract the data returned from the API
-  const weatherData = data || [];
+  const weatherData = data?.forecasts || [];
+  const resolvedLocationName = data?.locationName || effectiveLocation;
   
   return { 
     weatherData, 
     isLoading, 
     error: error ? (error as Error).message : null,
     hasLocation: !!effectiveLocation,
-    location: effectiveLocation
+    location: effectiveLocation,
+    resolvedLocationName
   };
 }

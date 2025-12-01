@@ -7,10 +7,17 @@ interface WeatherRowProps {
   forecasts: WeatherForecast[];
   isLoading?: boolean;
   location?: string | null;
+  resolvedLocationName?: string | null;
   vertical?: boolean;
 }
 
-export default function WeatherRow({ forecasts, isLoading = false, location = null, vertical = false }: WeatherRowProps) {
+export default function WeatherRow({ 
+  forecasts, 
+  isLoading = false, 
+  location = null, 
+  resolvedLocationName = null,
+  vertical = false 
+}: WeatherRowProps) {
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -38,7 +45,8 @@ export default function WeatherRow({ forecasts, isLoading = false, location = nu
     );
   }
 
-  const displayLocation = getLocationName(location || "default");
+  // Use resolved location name from server if available (includes city/state from GPS)
+  const displayLocation = resolvedLocationName || getLocationName(location || "default");
   const locationStatus = getLocationStatus(location || "default");
   
   // Make a copy of the first forecast with isCurrent flag for the current conditions card

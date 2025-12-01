@@ -108,4 +108,4 @@ server.log
 # Previous entries
 server/public
 vite.config.ts.*
-*.tar.gz
+*.tar.gzdev.log

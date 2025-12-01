@@ -2,13 +2,14 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast } from "@shared/schema";
+import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, insertImageSchema, WeatherForecast } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
-import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
+import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather, reverseGeocodeCoordinates, geocodeLocation } from "./openWeatherApi";
 import { eq } from "drizzle-orm";
 import { events, Event } from "@shared/schema";
+import { upload, getImageUrl } from "./middleware/upload";
 
 // Helper function to determine the current season based on date
 function getSeasonForDate(date: Date): string {
@@ -60,6 +61,9 @@ function formatWeatherData(weatherData: { locationName: string, forecasts: Weath
     forecast: forecast.map((day: WeatherForecast) => ({ ...day, isCurrent: false }))
   };
 }
+
+// In-memory per-conversation context (e.g., last known location)
+const conversationContext = new Map<number, { lastLocation?: string }>();
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // API error handler middleware
@@ -314,20 +318,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Weather routes
   app.get("/api/weather", async (req: Request, res: Response) => {
     try {
+      // Accept both location string and coordinates
       const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
+      const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+      const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
+      
+      if (!location && (!lat || !lon)) {
+        return res.status(400).json({ message: "Location or coordinates required" });
       }
 
-      const weatherData = await fetchComprehensiveWeather(location);
+      // Prefer coordinates for accuracy
+      const locationInput = (lat && lon) ? { lat, lon } : location;
+      const weatherData = await fetchComprehensiveWeather(locationInput);
+      
       if (!weatherData) {
         return res.status(404).json({ 
           message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
         });
       }
 
-      const formattedData = formatWeatherData(weatherData);
-      return res.status(200).json(formattedData);
+      // Return consistent structure: { locationName, forecasts }
+      console.log(`Weather data retrieved for ${weatherData.locationName}: ${weatherData.forecasts.length} forecasts`);
+      return res.status(200).json(weatherData);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Geocoding endpoint for resolving place names to coordinates
+  app.get("/api/geocode", async (req: Request, res: Response) => {
+    try {
+      const location = (req.query.location as string | undefined)?.trim();
+
+      if (!location) {
+        return res.status(400).json({ message: "Location query parameter is required" });
+      }
+
+      const result = await geocodeLocation(location);
+
+      if (!result) {
+        return res.status(404).json({
+          message: "Could not geocode location. Try a more specific place name (e.g., 'Norwich, England').",
+          location,
+        });
+      }
+
+      return res.status(200).json(result);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Reverse geocoding endpoint for location service
+  app.get("/api/reverse-geocode", async (req: Request, res: Response) => {
+    try {
+      const lat = parseFloat(req.query.lat as string);
+      const lon = parseFloat(req.query.lon as string);
+
+      if (isNaN(lat) || isNaN(lon)) {
+        return res.status(400).json({ message: "Valid latitude and longitude required" });
+      }
+
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        return res.status(400).json({ message: "Coordinates out of valid range" });
+      }
+
+      const result = await reverseGeocodeCoordinates(lat, lon);
+      
+      if (!result) {
+        return res.status(404).json({ 
+          message: "Could not reverse geocode coordinates",
+          name: `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+        });
+      }
+
+      return res.status(200).json(result);
     } catch (err) {
       return handleApiError(err, res);
     }
@@ -516,6 +581,33 @@ How can I help with your agricultural planning today?`;
     }
   });
 
+  app.post("/api/conversations/:id/system-message", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const conversation = await storage.getConversation(id);
+
+      if (!conversation) {
+        return res.status(404).json({ message: "Conversation not found" });
+      }
+
+      const { content } = z.object({
+        content: z.string()
+      }).parse(req.body);
+
+      const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+
+      messages.push({
+        role: "system",
+        content
+      });
+
+      const updatedConversation = await storage.updateConversation(id, messages);
+      return res.status(200).json(updatedConversation);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
   app.post("/api/conversations/:id/messages", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
@@ -525,8 +617,9 @@ How can I help with your agricultural planning today?`;
         return res.status(404).json({ message: "Conversation not found" });
       }
 
-      const { message } = z.object({
-        message: z.string()
+      const { message, location: bodyLocation } = z.object({
+        message: z.string(),
+        location: z.string().nullable().optional()  // Accept null, undefined, or string
       }).parse(req.body);
 
       // Add user message
@@ -541,25 +634,56 @@ How can I help with your agricultural planning today?`;
         apiKey: process.env.OPENAI_API_KEY
       });
 
-      // Get location data for context from request headers or use default
-      const userAgent = req.headers['user-agent'] || '';
-      let userLocation = 'Unknown Location';
+      // Determine whether this request should ignore location-based context entirely
+      const isLocationIndependent = bodyLocation === null;
 
-      // Try to get location from query or cookies, or use default
-      if (req.query.location) {
-        userLocation = req.query.location as string;
-      } else if (req.cookies && req.cookies.userLocation) {
-        userLocation = req.cookies.userLocation;
+      // Get location data for context - prefer explicit body location, then stored conversation context,
+      // then query, cookies, and finally headers. Avoid falling back to a default location when the
+      // client explicitly requested location-independent mode.
+      let userLocation: string | null = null;
+
+      if (!isLocationIndependent) {
+        if (bodyLocation && bodyLocation.trim()) {
+          userLocation = bodyLocation.trim();
+          console.log('Using location from request body:', userLocation);
+        } else {
+          const existingContext = conversationContext.get(id);
+          if (existingContext?.lastLocation) {
+            userLocation = existingContext.lastLocation;
+            console.log('Using last known location from conversation context:', userLocation);
+          } else if (req.query.location) {
+            userLocation = req.query.location as string;
+            console.log('Using location from query:', userLocation);
+          } else if (req.cookies && req.cookies.userLocation) {
+            userLocation = req.cookies.userLocation;
+            console.log('Using location from cookies:', userLocation);
+          } else {
+            const savedLocation = req.headers['x-user-location'] as string | undefined;
+            if (savedLocation && savedLocation.trim()) {
+              userLocation = savedLocation.trim();
+              console.log('Using location from headers:', userLocation);
+            }
+          }
+        }
       } else {
-        // Default location if not provided
-        userLocation = 'New York, USA';
+        console.log('Location-independent mode: skipping location-based context');
+      }
+
+      if (!isLocationIndependent && userLocation) {
+        conversationContext.set(id, {
+          ...(conversationContext.get(id) || {}),
+          lastLocation: userLocation,
+        });
       }
 
       // Get real weather data and context directly instead of going through the API
       // This avoids port issues and is more efficient
 
-      // Get weather data
-      const weatherData = await fetchComprehensiveWeather(userLocation);
+      // Get weather data only when we have a concrete location
+      let weatherData: any = null;
+      if (!isLocationIndependent && userLocation) {
+        weatherData = await fetchComprehensiveWeather(userLocation);
+      }
 
       // Get user's calendar events (using default user ID 1)
       const userId = 1;
@@ -572,9 +696,9 @@ How can I help with your agricultural planning today?`;
       // Build context data directly - similar structure to the /api/assistant/context endpoint
       const contextData = {
         timestamp: now.toISOString(),
-        location: userLocation,
+        location: userLocation || (isLocationIndependent ? 'Location-Independent (no specific location provided)' : 'Unknown Location'),
         season: currentSeason,
-        weather: weatherData && weatherData.forecasts.length > 0 ? {
+        weather: weatherData && weatherData.forecasts && weatherData.forecasts.length > 0 ? {
           current: {
             temperature: weatherData.forecasts[0].temperature, // Already in Fahrenheit
             conditions: weatherData.forecasts[0].weatherDescription,
@@ -596,22 +720,51 @@ How can I help with your agricultural planning today?`;
         }))
       };
 
-      // Prepare messages for API
+      // Prepare messages for API with enhanced weather context
+      let weatherContextMessage = '';
+      if (contextData.weather && weatherData && weatherData.forecasts.length > 0) {
+        const current = weatherData.forecasts[0];
+        const next7Days = weatherData.forecasts.slice(0, 8);
+        
+        weatherContextMessage = `
+
+## CURRENT WEATHER CONDITIONS
+Location: ${weatherData.locationName}
+Temperature: ${current.temperature}°F (feels like ${current.feels_like}°F)
+Conditions: ${current.weatherDescription}
+Humidity: ${current.humidity}%
+Wind Speed: ${current.wind} mph
+Precipitation Chance: ${current.precipitation}%${current.uv_index ? `
+UV Index: ${current.uv_index}` : ''}${current.pressure ? `
+Pressure: ${current.pressure} mb` : ''}
+
+## 7-DAY DETAILED FORECAST
+${next7Days.map((day: any, idx: number) => `${idx === 0 ? 'Today' : day.dayOfWeek} (${day.date}):
+  - High/Low: ${day.temp_max}°F / ${day.temp_min}°F
+  - Conditions: ${day.weatherDescription}
+  - Precipitation: ${day.precipitation}%
+  - Wind: ${day.wind} mph${day.uv_index ? `
+  - UV Index: ${day.uv_index}` : ''}`).join('\n\n')}
+
+## AGRICULTURAL CONSIDERATIONS
+IMPORTANT: Use this weather data to provide context-aware agricultural recommendations:
+- Temperature extremes: Frost risk at <32°F, heat stress at >95°F
+- Precipitation timing: Critical for planting, irrigation scheduling, and harvesting
+- Wind conditions: Important for spraying operations (avoid >15 mph), plant support
+- Humidity levels: High humidity increases disease risk; low humidity requires more irrigation
+- UV index: Affects sun-sensitive crops and worker safety${current.temperature < 40 ? `
+- ⚠️ FROST ALERT: Current temperature ${current.temperature}°F is near or below frost threshold` : ''}${current.temperature > 90 ? `
+- ⚠️ HEAT ALERT: Current temperature ${current.temperature}°F requires additional irrigation` : ''}${current.precipitation > 70 ? `
+- ⚠️ RAIN ALERT: ${current.precipitation}% chance of rain - consider rescheduling outdoor activities` : ''}${current.wind > 15 ? `
+- ⚠️ WIND ALERT: ${current.wind} mph winds - avoid spraying and check plant supports` : ''}`;
+      }
+
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
 
-Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
-Current season: ${contextData.season}
-User location: ${contextData.location}
-${contextData.weather ? `
-Current weather: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
-Humidity: ${contextData.weather.current.humidity}%
-Wind: ${contextData.weather.current.wind} mph
-
-Weather forecast for the next ${contextData.weather.forecast.length} days:
-${contextData.weather.forecast.map((day: any, index: number) => 
-  `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
-).join('\n')}
-` : ''}
+## CURRENT CONTEXT
+Date and Time: ${new Date(contextData.timestamp).toLocaleString()}
+Season: ${contextData.season}
+User Location: ${contextData.location}${weatherContextMessage}
 ${contextData.events && contextData.events.length > 0 ? `
 Upcoming calendar events:
 ${contextData.events.slice(0, 5).map(event => {
@@ -642,7 +795,61 @@ For calendar events:
 4. Include a detailed description with helpful tips
 5. Set a location when relevant
 
-Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
+Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.
+
+## PROACTIVE GREETING AND DAILY BRIEFING
+When a conversation starts, or when the user returns after some time and simply greets you, you should open with a short, focused greeting that:
+- Uses the current local time of day (morning/afternoon/evening) at the user's location.
+- Summarizes the current weather and near-term forecast when available.
+- Highlights the next few upcoming events in the calendar (especially within the next few days).
+- Points out anything that appears urgent, blocked, weather-sensitive, or overdue.
+- Ends with a simple question about what the user would like to focus on now.
+
+Avoid repeating this full briefing on every single message. Use it at the start of a session or when the user message is just a greeting or vague check-in.
+
+## CONFLICT CHECKING RULES
+Before you schedule a new event or significantly modify an existing event, you MUST:
+1. Use search_calendar_events to look up relevant events in the requested time window and, when known, within the same project.
+2. Look for:
+   - Time overlaps between events.
+   - Overlaps at the same physical location (fields, houses, bays, tunnels, etc.).
+   - Weather risks for events with checkWeather set to true (e.g., very high precipitation, frost conditions, strong winds).
+3. Clearly explain any conflicts or risks to the user and ask what they prefer to do. Do NOT automatically reschedule, cancel, or move events without explicit user input.
+
+## SOP AND DOCUMENT MANAGEMENT
+Use create_user_document when the user asks for detailed SOPs, multi-step plans, or long reports. Store:
+- Long-form, multi-page SOPs, research notes, and analyses in user documents (e.g., documentType "sop", "plan", or "analysis").
+- Short, actionable summaries, links, and key reminders in the event's instructions and notes fields.
+
+When appropriate, use list_user_documents to re-use or reference existing documents instead of recreating similar content from scratch.
+
+## BEHAVIOR EXAMPLES
+
+Example – Morning login with upcoming tasks
+User: "Good morning"
+Assistant (first response):
+- Greets the user using the local time of day and location.
+- Briefly describes current weather and the next few days' forecast.
+- Mentions the next few upcoming events (and any that are overdue or at risk due to weather).
+- Asks what the user wants to focus on (for example: reviewing today's tasks, planning the week, or digging into a specific project).
+
+Example – Creating a detailed SOP and linking it to events
+User: "Create a detailed SOP for pruning my orchard this winter and add the necessary tasks to the calendar."
+Assistant (tool behavior):
+- Calls get_or_create_project for the relevant orchard project if it does not exist.
+- Calls create_user_document to store the long, detailed SOP (documentType like "sop" or "plan").
+- Creates or updates calendar events using create_calendar_event and/or update_calendar_event, putting a concise summary and a reference to the SOP document into the event instructions and notes.
+
+Example – Detecting and explaining scheduling conflicts
+User: "Schedule a spraying session for tomorrow afternoon in the South Field."
+Assistant (tool behavior):
+- Calls search_calendar_events for tomorrow around the requested time.
+- Checks for overlapping events in the South Field and considers forecasted weather for spraying.
+- If conflicts or weather issues exist, explains them clearly and asks whether the user wants to keep the time, move the new event, or adjust existing events.
+
+Additional guidance:
+- Do not introduce very specific crops or varieties unless the user has already brought them up in this conversation.
+- Always think like a proactive farm manager who lives inside the calendar UI: plan operations, surface conflicts, and help the user think ahead based on their location, season, and weather.`;
 
       // Add system message and user's message
       const apiMessages = [
@@ -696,7 +903,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               properties: {
                 title: {
                   type: "string",
-                  description: "The title of the event (e.g., 'Turn Compost Piles', 'Plant Tomatoes')"
+                  description: "The title of the event (e.g., 'Turn compost piles', 'Plant seedlings')"
                 },
                 description: {
                   type: "string",
@@ -721,6 +928,58 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
                 checkWeather: {
                   type: "boolean",
                   description: "Whether this event is weather-dependent (default: true for agricultural tasks)"
+                },
+                allDay: {
+                  type: "boolean",
+                  description: "Whether this is an all-day event (no specific start/end times)"
+                },
+                instructions: {
+                  type: "string",
+                  description: "Concise, step-by-step instructions for how to carry out this task (Markdown). Use this for actionable steps; store long, multi-page SOPs in a user document and reference them here."
+                },
+                materials: {
+                  type: "array",
+                  description: "Optional checklist of materials or equipment needed for this event.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      quantity: { type: "string" },
+                      checked: { type: "boolean" }
+                    },
+                    required: ["name"]
+                  }
+                },
+                researchLinks: {
+                  type: "array",
+                  description: "Optional reference links (articles, research, reports) relevant to this event.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      url: { type: "string" },
+                      title: { type: "string" },
+                      description: { type: "string" }
+                    },
+                    required: ["url"]
+                  }
+                },
+                notes: {
+                  type: "string",
+                  description: "Short, high-level summary or key takeaways for this event. Keep this readable in the calendar UI; store long-form content in user documents."
+                },
+                imageUrls: {
+                  type: "array",
+                  description: "Optional image URLs attached to this event (field photos, diagrams, etc.)",
+                  items: { type: "string" }
+                },
+                isRecurring: {
+                  type: "boolean",
+                  description: "Whether this event repeats on a schedule."
+                },
+                recurringPattern: {
+                  type: "object",
+                  description: "Details of the recurrence pattern (e.g., frequency, interval, daysOfWeek). This is stored as JSON and does not have a strict schema.",
+                  additionalProperties: true
                 }
               },
               required: ["title", "startDate", "endDate"]
@@ -766,6 +1025,58 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
                 checkWeather: {
                   type: "boolean",
                   description: "Whether this event is weather-dependent"
+                },
+                allDay: {
+                  type: "boolean",
+                  description: "Whether this is an all-day event (no specific start/end times)"
+                },
+                instructions: {
+                  type: "string",
+                  description: "Concise, step-by-step instructions for how to carry out this task (Markdown)."
+                },
+                materials: {
+                  type: "array",
+                  description: "Optional checklist of materials or equipment needed for this event.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      quantity: { type: "string" },
+                      checked: { type: "boolean" }
+                    },
+                    required: ["name"]
+                  }
+                },
+                researchLinks: {
+                  type: "array",
+                  description: "Optional reference links (articles, research, reports) relevant to this event.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      url: { type: "string" },
+                      title: { type: "string" },
+                      description: { type: "string" }
+                    },
+                    required: ["url"]
+                  }
+                },
+                notes: {
+                  type: "string",
+                  description: "Short, high-level summary or key takeaways for this event."
+                },
+                imageUrls: {
+                  type: "array",
+                  description: "Optional image URLs attached to this event.",
+                  items: { type: "string" }
+                },
+                isRecurring: {
+                  type: "boolean",
+                  description: "Whether this event repeats on a schedule."
+                },
+                recurringPattern: {
+                  type: "object",
+                  description: "Details of the recurrence pattern (e.g., frequency, interval, daysOfWeek). This is stored as JSON and does not have a strict schema.",
+                  additionalProperties: true
                 }
               },
               required: ["eventId"]
@@ -1088,19 +1399,31 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           const eventData = functionArgs;
           console.log("Updating calendar event from assistant:", eventData);
 
-          // Validate the event data
-          const validatedEvent = insertEventSchema.parse({
-            ...eventData,
-            userId: 1, // Default user ID
-          });
+          const existingEvent = await storage.getEvent(eventData.eventId);
 
-          // Update the event using the storage interface
-          const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
+          if (!existingEvent) {
+            toolResponse = JSON.stringify({
+              success: false,
+              error: "Event not found"
+            });
+          } else {
+            const mergedEventData = {
+              ...existingEvent,
+              ...eventData,
+              userId: existingEvent.userId ?? 1,
+              startDate: eventData.startDate ? new Date(eventData.startDate) : existingEvent.startDate,
+              endDate: eventData.endDate ? new Date(eventData.endDate) : existingEvent.endDate
+            };
 
-          toolResponse = JSON.stringify({
-            success: true,
-            event: updatedEvent
-          });
+            const validatedEvent = insertEventSchema.parse(mergedEventData);
+
+            const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
+
+            toolResponse = JSON.stringify({
+              success: true,
+              event: updatedEvent
+            });
+          }
         } else if (functionName === "delete_calendar_event") {
           console.log("Deleting calendar event from assistant:", functionArgs.eventId);
 
@@ -1860,6 +2183,235 @@ For deleting events, you only need the event ID`;
       }
       
       return res.status(200).json({ message: "Document deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Notification routes
+  app.get("/api/notifications", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const notifications = await storage.getNotificationsByUser(userId);
+      return res.status(200).json(notifications);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/unread", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const unreadNotifications = await storage.getUnreadNotificationsByUser(userId);
+      return res.status(200).json(unreadNotifications);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/unread/count", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const unreadNotifications = await storage.getUnreadNotificationsByUser(userId);
+      return res.status(200).json({ count: unreadNotifications.length });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/notifications/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const notification = await storage.getNotification(id);
+      
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json(notification);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/notifications/:id/read", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const notification = await storage.markNotificationAsRead(id);
+      
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json(notification);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/notifications/:id/dismiss", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const dismissed = await storage.dismissNotification(id);
+      
+      if (!dismissed) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json({ message: "Notification dismissed" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/notifications/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteNotification(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      
+      return res.status(200).json({ message: "Notification deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Image routes
+  app.get("/api/images", async (req: Request, res: Response) => {
+    try {
+      const userId = 1; // Default demo user
+      const images = await storage.getImagesByUser(userId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/event/:eventId", async (req: Request, res: Response) => {
+    try {
+      const eventId = parseInt(req.params.eventId);
+      const images = await storage.getImagesByEvent(eventId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/conversation/:conversationId", async (req: Request, res: Response) => {
+    try {
+      const conversationId = parseInt(req.params.conversationId);
+      const images = await storage.getImagesByConversation(conversationId);
+      return res.status(200).json(images);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/images/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const image = await storage.getImage(id);
+      
+      if (!image) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+      
+      return res.status(200).json(image);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/images/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await storage.deleteImage(id);
+      
+      if (!deleted) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+      
+      return res.status(200).json({ message: "Image deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Image upload endpoint with GPT-4 Vision support
+  app.post("/api/images/upload", upload.single('image'), async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No image file provided" });
+      }
+
+      const userId = 1; // Default demo user
+      const { eventId, conversationId, analyzeWithAI } = req.body;
+
+      const imageUrl = getImageUrl(req.file.filename);
+      
+      let aiAnalysis = null;
+      
+      // If AI analysis requested, use GPT-4 Vision
+      if (analyzeWithAI === 'true') {
+        try {
+          const OpenAI = await import("openai");
+          const openai = new OpenAI.default({
+            apiKey: process.env.OPENAI_API_KEY
+          });
+
+          const fullUrl = `${req.protocol}://${req.get('host')}${imageUrl}`;
+          
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "You are an agricultural expert. Analyze this image and provide: 1) What you see (crop, plant, equipment, etc.), 2) Any issues or diseases visible, 3) Recommendations for the farmer. Be specific and actionable."
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: fullUrl
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 500
+          });
+
+          aiAnalysis = {
+            analysis: response.choices[0].message.content,
+            model: "gpt-4o",
+            timestamp: new Date().toISOString()
+          };
+        } catch (aiError) {
+          console.error("AI analysis error:", aiError);
+          // Continue without AI analysis if it fails
+        }
+      }
+
+      const imageData = {
+        userId,
+        eventId: eventId ? parseInt(eventId) : undefined,
+        conversationId: conversationId ? parseInt(conversationId) : undefined,
+        filename: req.file.filename,
+        url: imageUrl,
+        mimeType: req.file.mimetype,
+        fileSize: req.file.size,
+        aiAnalysis
+      };
+
+      const validatedImage = insertImageSchema.parse(imageData);
+      const savedImage = await storage.createImage(validatedImage);
+
+      return res.status(201).json(savedImage);
     } catch (err) {
       return handleApiError(err, res);
     }

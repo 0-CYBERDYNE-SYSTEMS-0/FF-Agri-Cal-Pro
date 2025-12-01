@@ -33,7 +33,7 @@ export default function Weather() {
   const locationToUse = selectedLocation === "default" ? userLocation : selectedLocation;
   
   // Use our weather hook to manage weather data
-  const { weatherData, isLoading: isLoadingWeather, error, hasLocation, location: effectiveLocation } = useWeather(locationToUse || undefined);
+  const { weatherData, isLoading: isLoadingWeather, error, hasLocation, location: effectiveLocation, resolvedLocationName } = useWeather(locationToUse || undefined);
   
   const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
     queryKey: ["/api/events"],
@@ -66,6 +66,9 @@ export default function Weather() {
   // Get today's forecast
   const todayForecast = weatherData[0];
   const locationStatus = locationToUse ? getLocationStatus(locationToUse) : null;
+  
+  // Use resolved location name from server if available, otherwise use locationToUse
+  const displayLocationName = resolvedLocationName || getLocationName(locationToUse || "");
   
   // Handle location permission request
   const handleRequestLocation = () => {
@@ -161,7 +164,7 @@ export default function Weather() {
         <div>
           <h1 className="text-2xl font-serif font-bold text-neutral-900">Weather Forecast</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span className="text-lg font-medium text-primary">{getLocationName(locationToUse || "")}</span>
+            <span className="text-lg font-medium text-primary">{displayLocationName}</span>
             {locationStatus && (
               <span className={`text-xs px-2 py-1 rounded-full ${locationStatus.className}`}>
                 {locationStatus.icon} {locationStatus.text}
@@ -222,7 +225,7 @@ export default function Weather() {
                 {formatDate(new Date(), { weekday: 'long', month: 'long', day: 'numeric' })}
               </p>
               <p className="text-primary-foreground/90 text-sm mt-1 font-medium">
-                📍 {getLocationName(effectiveLocation || "")}
+                📍 {displayLocationName}
               </p>
               
               <div className="mt-4 space-y-1">

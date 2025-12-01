@@ -319,15 +319,29 @@ class LocationService {
           resolve({ success: true, location });
         },
         (error) => {
-          console.error('GPS location error:', error);
+          const friendlyMessage = this.mapGeolocationError(error);
+          console.warn('GPS location error:', { code: error.code, message: friendlyMessage });
           resolve({
             success: false,
-            error: `GPS error: ${error.message}`
+            error: friendlyMessage
           });
         },
         options
       );
     });
+  }
+
+  private mapGeolocationError(error: GeolocationPositionError): string {
+    switch (error.code) {
+      case error.PERMISSION_DENIED:
+        return 'Location permission was denied. You can enable it in your browser site settings.';
+      case error.POSITION_UNAVAILABLE:
+        return 'Location is currently unavailable from the browser. Try again in a moment or enter a city/town manually.';
+      case error.TIMEOUT:
+        return 'Timed out while trying to get your location. Please try again or enter a location manually.';
+      default:
+        return 'Unexpected GPS error from the browser. Try again or enter a location manually.';
+    }
   }
 
   /**
