@@ -2,19 +2,19 @@
 <div align="center">
 
 ```
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                                                                               ║
-║   ███████╗███████╗      █████╗  ██████╗ ██████╗ ██╗ ██████╗ █████╗ ██╗      ║
-║   ██╔════╝██╔════╝     ██╔══██╗██╔════╝ ██╔══██╗██║██╔════╝██╔══██╗██║      ║
-║   █████╗  █████╗       ███████║██║  ███╗██████╔╝██║██║     ███████║██║      ║
-║   ██╔══╝  ██╔══╝       ██╔══██║██║   ██║██╔══██╗██║██║     ██╔══██║██║      ║
-║   ██║     ██║          ██║  ██║╚██████╔╝██║  ██║██║╚██████╗██║  ██║███████╗ ║
-║   ╚═╝     ╚═╝          ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝ ║
-║                                                                               ║
-║                    ╔═══════════════════════════════════╗                      ║
-║                    ║   CALENDAR PRO   |   AI POWERED   ║                      ║
-║                    ╚═══════════════════════════════════╝                      ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
+
+                                                                               
+                      
+               
+                         
+                          
+                         
+                            
+                                                                               
+                                          
+                       CALENDAR PRO   |   AI POWERED                         
+                                          
+
 ```
 
 <h3 align="center">
@@ -52,9 +52,9 @@ interface FFAgriCalPro {
 <tr>
 <td width="33%" align="center">
 
-### 🌾 Agricultural Focus
+###  Agricultural Focus
 ```
-[████████████████] 100%
+[] 100%
 Farm-Ready Features
 ```
 - Crop planning & tracking
@@ -65,9 +65,9 @@ Farm-Ready Features
 </td>
 <td width="33%" align="center">
 
-### 🤖 AI Assistant
+###  AI Assistant
 ```
-[████████████████] 100%
+[] 100%
 OpenAI Integration
 ```
 - Natural language commands
@@ -78,9 +78,9 @@ OpenAI Integration
 </td>
 <td width="33%" align="center">
 
-### 🌦️ Weather Intelligence
+###  Weather Intelligence
 ```
-[████████████████] 100%
+[] 100%
 Real-time Data
 ```
 - Location-based forecasts
@@ -117,36 +117,36 @@ npm run dev
 ```
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  🚀 SYSTEM ONLINE                                               │
-├─────────────────────────────────────────────────────────────────┤
-│  Frontend:  http://localhost:5001                               │
-│  Backend:   http://localhost:3000                               │
-│  Database:  PostgreSQL (Drizzle ORM)                           │
-└─────────────────────────────────────────────────────────────────┘
+
+   SYSTEM ONLINE                                               
+
+  Frontend:  http://localhost:5001                               
+  Backend:   http://localhost:3000                               
+  Database:  PostgreSQL (Drizzle ORM)                           
+
 ```
 
 ## `> ARCHITECTURE`
 
 ```
 FF-Agri-Cal-Pro/
-│
-├── client/               # React + TypeScript frontend
-│   ├── src/
-│   │   ├── components/   # UI components (shadcn/ui)
-│   │   ├── contexts/     # React Context providers
-│   │   ├── lib/          # Utilities & API client
-│   │   └── pages/        # Application routes
-│   │
-├── server/               # Express.js backend
-│   ├── routes.ts         # API endpoints
-│   ├── openWeatherApi.ts # Weather integration
-│   └── index.ts          # Server entry point
-│
-├── shared/               # Shared types & schemas
-│   └── schema.ts         # Drizzle ORM schemas
-│
-└── [CONFIG FILES]        # TypeScript, Vite, Tailwind
+
+ client/               # React + TypeScript frontend
+    src/
+       components/   # UI components (shadcn/ui)
+       contexts/     # React Context providers
+       lib/          # Utilities & API client
+       pages/        # Application routes
+   
+ server/               # Express.js backend
+    routes.ts         # API endpoints
+    openWeatherApi.ts # Weather integration
+    index.ts          # Server entry point
+
+ shared/               # Shared types & schemas
+    schema.ts         # Drizzle ORM schemas
+
+ [CONFIG FILES]        # TypeScript, Vite, Tailwind
 ```
 
 ## `> TECHNOLOGY_STACK`
@@ -264,11 +264,11 @@ MIT License - See LICENSE file for details
 <div align="center">
 
 ```
-╔═══════════════════════════════════════════════════════════════════╗
-║                                                                   ║
-║   BUILT FOR FARMERS  |  POWERED BY AI  |  DRIVEN BY WEATHER     ║
-║                                                                   ║
-╚═══════════════════════════════════════════════════════════════════╝
+
+                                                                   
+   BUILT FOR FARMERS  |  POWERED BY AI  |  DRIVEN BY WEATHER     
+                                                                   
+
 ```
 
 </div>
