@@ -1,21 +1,10 @@
-# 
+
 <div align="center">
 
-```
 
-                                                                               
-                      
-               
-                         
-                          
-                         
-                            
-                                                                               
-                                          
                        CALENDAR PRO   |   AI POWERED                         
                                           
 
-```
 
 <h3 align="center">
 <code>// INTELLIGENT AGRICULTURAL CALENDAR WITH AI-DRIVEN INSIGHTS</code>
@@ -33,7 +22,6 @@
 ---
 
 ## `> PROJECT_OVERVIEW`
-
 ```typescript
 interface FFAgriCalPro {
   type: "Full-Stack Agricultural Calendar Application"
@@ -44,19 +32,17 @@ interface FFAgriCalPro {
     deployment: ["Docker Ready", "Production Optimized"]
   }
 }
-```
 
 ## `> CORE_FEATURES`
-
 <table>
 <tr>
 <td width="33%" align="center">
 
 ###  Agricultural Focus
-```
-[] 100%
+
+ 100%
 Farm-Ready Features
-```
+
 - Crop planning & tracking
 - Weather-aware scheduling
 - Seasonal recommendations
@@ -66,10 +52,10 @@ Farm-Ready Features
 <td width="33%" align="center">
 
 ###  AI Assistant
-```
-[] 100%
+
+ 100%
 OpenAI Integration
-```
+
 - Natural language commands
 - Smart event creation
 - Agricultural insights
@@ -79,10 +65,10 @@ OpenAI Integration
 <td width="33%" align="center">
 
 ###  Weather Intelligence
-```
-[] 100%
+
+ 100%
 Real-time Data
-```
+
 - Location-based forecasts
 - Agricultural alerts
 - Event weather checking
@@ -93,10 +79,9 @@ Real-time Data
 </table>
 
 ## `> QUICK_START`
-
 ```bash
 # Clone repository
-git clone https://github.com/kjberry17/FF-Agri-Cal-Pro.git
+git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FF-Agri-Cal-Pro.git
 cd FF-Agri-Cal-Pro
 
 # Install dependencies
@@ -108,15 +93,12 @@ cp .env.example .env
 # - DATABASE_URL (PostgreSQL)
 # - OPENAI_API_KEY
 # - OPENWEATHER_API_KEY
-
 # Database initialization
 npm run db:push
 
 # Launch development server
 npm run dev
-```
 
-```
 
    SYSTEM ONLINE                                               
 
@@ -124,11 +106,9 @@ npm run dev
   Backend:   http://localhost:3000                               
   Database:  PostgreSQL (Drizzle ORM)                           
 
-```
 
 ## `> ARCHITECTURE`
 
-```
 FF-Agri-Cal-Pro/
 
  client/               # React + TypeScript frontend
@@ -147,10 +127,8 @@ FF-Agri-Cal-Pro/
     schema.ts         # Drizzle ORM schemas
 
  [CONFIG FILES]        # TypeScript, Vite, Tailwind
-```
 
 ## `> TECHNOLOGY_STACK`
-
 <div align="center">
 
 | Layer | Technology | Purpose |
@@ -169,7 +147,6 @@ FF-Agri-Cal-Pro/
 </div>
 
 ## `> API_ENDPOINTS`
-
 ```typescript
 // Core API Routes
 GET    /api/user                 // User profile
@@ -194,10 +171,8 @@ GET    /api/conversations        // Chat history
 // Weather Services
 GET    /api/weather/current      // Current weather
 GET    /api/weather/forecast     // 5-day forecast
-```
 
 ## `> DATABASE_SCHEMA`
-
 ```sql
 -- Core Tables
 users                 # User authentication & profiles
@@ -205,10 +180,8 @@ projects              # Agricultural projects
 events                # Calendar events with weather linking
 conversations         # AI chat history
 weather_cache         # Optimized weather data caching
-```
 
 ## `> DEVELOPMENT`
-
 ```bash
 # Development commands
 npm run dev              # Full-stack development
@@ -217,20 +190,16 @@ npm run client:dev       # Frontend only
 npm run check            # TypeScript checking
 npm run build            # Production build
 npm run db:push          # Database migrations
-```
 
 ## `> DEPLOYMENT`
-
 ```bash
 # Production build
 npm run build
 
 # Start production server
 NODE_ENV=production npm start
-```
 
 ## `> ENVIRONMENT_VARIABLES`
-
 ```env
 # Database
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
@@ -241,34 +210,26 @@ OPENWEATHER_API_KEY=...
 
 # Session
 SESSION_SECRET=your-secret-key
-```
 
 ## `> CONTRIBUTING`
-
 ```bash
 # Development workflow
 git checkout -b feature/your-feature
 npm run check                    # Type checking
 git commit -m "feat: description"
 git push origin feature/your-feature
-```
 
 ## `> LICENSE`
 
-```
 MIT License - See LICENSE file for details
-```
 
 ---
 
 <div align="center">
 
-```
 
-                                                                   
    BUILT FOR FARMERS  |  POWERED BY AI  |  DRIVEN BY WEATHER     
                                                                    
 
-```
 
 </div>
