@@ -18,3 +18,5 @@ vite.config.ts.*
 # Replit platform files
 .replit
 replit.nix
+*.repomix.xml
+attached_assets/
