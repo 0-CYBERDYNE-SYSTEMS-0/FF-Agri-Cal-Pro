@@ -1,4 +1,5 @@
 import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, WeatherForecast } from "@shared/schema";
+import * as bcrypt from "bcrypt";
 
 export interface IStorage {
   // User methods
@@ -85,10 +86,11 @@ export class MemStorage implements IStorage {
   }
 
   private async initSampleData() {
-    // Create a sample user
+    // Create a sample user (password hashed for bcrypt compatibility)
+    const hashedPassword = await bcrypt.hash("password123", 10);
     const sampleUser: InsertUser = {
       username: "demo",
-      password: "password123",
+      password: hashedPassword,
       email: "demo@example.com",
       displayName: "Sarah Johnson",
       profileImage: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"

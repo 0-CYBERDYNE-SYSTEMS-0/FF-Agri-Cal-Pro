@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
 import { Event } from "@shared/schema";
 import { formatDate } from "@/lib/calendarUtils";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 
 type CalendarViewType = "day" | "week" | "month" | "year";
 
@@ -9,6 +11,8 @@ interface CalendarContextType {
   view: CalendarViewType;
   events: Event[];
   isLoading: boolean;
+  eventsRefreshTrigger: number;
+  refreshEvents: () => void;
   setCurrentDate: (date: Date) => void;
   setView: (view: CalendarViewType) => void;
   goToToday: () => void;
@@ -18,12 +22,13 @@ interface CalendarContextType {
   forceRender: number;
 }
 
-// Create context with default values
 const CalendarContext = createContext<CalendarContextType>({
   currentDate: new Date(),
   view: "month",
   events: [],
   isLoading: false,
+  eventsRefreshTrigger: 0,
+  refreshEvents: () => {},
   setCurrentDate: () => {},
   setView: () => {},
   goToToday: () => {},
@@ -36,20 +41,28 @@ const CalendarContext = createContext<CalendarContextType>({
 export function CalendarProvider({ children }: { children: ReactNode }) {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [view, setView] = useState<CalendarViewType>("month");
-  const [events, setEvents] = useState<Event[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [forceRender, setForceRender] = useState(0);
+  const [eventsRefreshTrigger, setEventsRefreshTrigger] = useState(0);
+  const queryClient = useQueryClient();
 
-  // Enhanced setView function with callback to ensure state updates
+  // Single source of truth for all calendar events
+  const { data: events = [], isLoading } = useQuery<Event[]>({
+    queryKey: ["/api/events", eventsRefreshTrigger],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/events");
+      return response.json();
+    },
+  });
+
+  const refreshEvents = useCallback(() => {
+    setEventsRefreshTrigger(prev => prev + 1);
+    queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+  }, [queryClient]);
+
   const setViewAndUpdate = useCallback((newView: CalendarViewType) => {
     console.log(`Changing view from ${view} to ${newView}`);
-    
-    // Only update if actually changing views
     if (newView !== view) {
-      // First update the forceRender counter to ensure the view change is detected
       setForceRender(prev => prev + 1);
-      
-      // Then update the view with a short delay to ensure state consistency
       setTimeout(() => {
         setView(newView);
         console.log(`View updated to ${newView}, forceRender: ${forceRender + 1}`);
@@ -57,7 +70,6 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     }
   }, [view, forceRender]);
 
-  // Log whenever view changes
   useEffect(() => {
     console.log("CalendarProvider view changed to:", view);
   }, [view]);
@@ -69,22 +81,12 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const goToPrev = useCallback(() => {
     setCurrentDate(prevDate => {
       const newDate = new Date(prevDate);
-      
       switch (view) {
-        case "day":
-          newDate.setDate(prevDate.getDate() - 1);
-          break;
-        case "week":
-          newDate.setDate(prevDate.getDate() - 7);
-          break;
-        case "month":
-          newDate.setMonth(prevDate.getMonth() - 1);
-          break;
-        case "year":
-          newDate.setFullYear(prevDate.getFullYear() - 1);
-          break;
+        case "day": newDate.setDate(prevDate.getDate() - 1); break;
+        case "week": newDate.setDate(prevDate.getDate() - 7); break;
+        case "month": newDate.setMonth(prevDate.getMonth() - 1); break;
+        case "year": newDate.setFullYear(prevDate.getFullYear() - 1); break;
       }
-      
       return newDate;
     });
   }, [view]);
@@ -92,22 +94,12 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   const goToNext = useCallback(() => {
     setCurrentDate(prevDate => {
       const newDate = new Date(prevDate);
-      
       switch (view) {
-        case "day":
-          newDate.setDate(prevDate.getDate() + 1);
-          break;
-        case "week":
-          newDate.setDate(prevDate.getDate() + 7);
-          break;
-        case "month":
-          newDate.setMonth(prevDate.getMonth() + 1);
-          break;
-        case "year":
-          newDate.setFullYear(prevDate.getFullYear() + 1);
-          break;
+        case "day": newDate.setDate(prevDate.getDate() + 1); break;
+        case "week": newDate.setDate(prevDate.getDate() + 7); break;
+        case "month": newDate.setMonth(prevDate.getMonth() + 1); break;
+        case "year": newDate.setFullYear(prevDate.getFullYear() + 1); break;
       }
-      
       return newDate;
     });
   }, [view]);
@@ -116,19 +108,12 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     return formatDate(currentDate, { month: "long", year: "numeric" });
   }, [currentDate]);
 
-  // Create context value object to avoid unnecessary re-renders
   const contextValue = {
-    currentDate,
-    view,
-    events,
-    isLoading,
-    setCurrentDate,
-    setView: setViewAndUpdate,
-    goToToday,
-    goToPrev,
-    goToNext,
-    formatCurrentMonthYear,
-    forceRender
+    currentDate, view, events, isLoading,
+    eventsRefreshTrigger, refreshEvents,
+    setCurrentDate, setView: setViewAndUpdate,
+    goToToday, goToPrev, goToNext,
+    formatCurrentMonthYear, forceRender
   };
 
   return (

@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { Event, WeatherForecast } from "@shared/schema";
 import {
   getCalendarDays,
   isSameMonth,
@@ -8,6 +6,7 @@ import {
 } from "@/lib/calendarUtils";
 import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
+import { Event, WeatherForecast } from "@shared/schema";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getProjectColor } from "@/lib/colorUtils";
@@ -98,11 +97,7 @@ export default function MonthView({ weatherData }: MonthViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<number | undefined>(undefined);
-  const { currentDate } = useCalendar();
-
-  const { data: events = [], isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { currentDate, events, isLoading } = useCalendar();
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();

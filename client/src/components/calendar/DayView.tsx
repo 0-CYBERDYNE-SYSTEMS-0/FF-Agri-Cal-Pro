@@ -65,11 +65,7 @@ interface DayViewProps {
 export default function DayView({ weatherData }: DayViewProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
-  const { currentDate } = useCalendar();
-  
-  const { data: events = [], isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { currentDate, events, isLoading } = useCalendar();
 
   const hours = Array.from({ length: 24 }, (_, i) => i); // 0-23 hours
   

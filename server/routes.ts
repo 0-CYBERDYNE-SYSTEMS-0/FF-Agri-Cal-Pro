@@ -132,6 +132,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/auth/logout", (req: Request, res: Response) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to logout" });
+      }
+      res.clearCookie("connect.sid");
+      return res.status(200).json({ message: "Logged out" });
+    });
+  });
+
+  app.get("/api/auth/status", (req: Request, res: Response) => {
+    const userId = (req.session as any).userId;
+    return res.status(200).json({ authenticated: !!userId, userId: userId || null });
+  });
+
   app.get("/api/users/me", async (req: Request, res: Response) => {
     try {
       const userId = getUserId(req);
@@ -151,7 +166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Project routes
-  app.get("/api/projects", async (req: Request, res: Response) => {
+  app.get("/api/projects", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
       const userId = getUserId(req);
@@ -222,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Event routes
-  app.get("/api/events", async (req: Request, res: Response) => {
+  app.get("/api/events", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
       const userId = getUserId(req);
@@ -435,7 +450,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Assistant/Conversation routes
-  app.get("/api/conversations", async (req: Request, res: Response) => {
+  app.get("/api/conversations", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
       const userId = getUserId(req);

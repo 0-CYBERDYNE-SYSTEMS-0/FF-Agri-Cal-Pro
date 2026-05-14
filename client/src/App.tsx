@@ -25,14 +25,16 @@ function Router() {
 }
 
 function App() {
-  const { login, user } = useAuth();
+  const { login, user, isLoading } = useAuth();
 
   useEffect(() => {
     // Auto-login with demo user for simplicity
-    if (!user) {
-      login("demo", "password123");
+    if (!user && !isLoading) {
+      login("demo", "password123").catch((err) => {
+        console.error("Auto-login failed:", err);
+      });
     }
-  }, [login, user]);
+  }, [login, user, isLoading]);
 
   return (
     <Suspense fallback={

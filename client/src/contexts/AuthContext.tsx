@@ -7,15 +7,14 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
-// Create context with default values
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: false,
-  login: async () => {}, // no-op implementation
-  logout: () => {},      // no-op implementation
+  login: async () => {},
+  logout: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -26,12 +25,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     try {
       setIsLoading(true);
-      
-      // For demo purposes, we'll just get the current user
-      // In a real app, we would send a login request with username and password
-      const response = await apiRequest("GET", "/api/users/me");
+      const response = await apiRequest("POST", "/api/auth/login", { username, password });
       const userData = await response.json();
-      
       setUser(userData);
       toast({
         title: "Login successful",
@@ -44,12 +39,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         description: "Invalid username or password.",
         variant: "destructive",
       });
+      throw error;
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest("POST", "/api/auth/logout");
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
     setUser(null);
     toast({
       title: "Logged out",
@@ -57,13 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [toast]);
 
-  // Create the context value object once to avoid unnecessary re-renders
-  const contextValue = {
-    user,
-    isLoading,
-    login,
-    logout
-  };
+  const contextValue = { user, isLoading, login, logout };
 
   return (
     <AuthContext.Provider value={contextValue}>

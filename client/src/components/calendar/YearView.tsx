@@ -92,11 +92,7 @@ interface YearViewProps {
 export default function YearView({ weatherData }: YearViewProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const { currentDate, setView, setCurrentDate } = useCalendar();
-  
-  const { data: events = [], isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { currentDate, events, isLoading, setView, setCurrentDate } = useCalendar();
 
   const year = currentDate.getFullYear();
   const currentMonth = new Date().getMonth();

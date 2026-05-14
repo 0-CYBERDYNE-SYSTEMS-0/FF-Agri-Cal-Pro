@@ -73,11 +73,7 @@ interface WeekViewProps {
 export default function WeekView({ weatherData }: WeekViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { currentDate } = useCalendar();
-  
-  const { data: events = [], isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { currentDate, events, isLoading } = useCalendar();
 
   // Generate week days starting from Sunday
   const generateWeekDays = (date: Date): Date[] => {
