@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Event, WeatherForecast } from "@shared/schema";
+import { WeatherForecast } from "@shared/schema";
+import { ExpandedEvent } from "@/lib/calendarUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { formatDate, isToday, getEventsForDay } from "@/lib/calendarUtils";
@@ -12,7 +13,7 @@ function TimeSlot({
   onClick
 }: { 
   hour: number;
-  events: Event[];
+  events: ExpandedEvent[];
   onClick: () => void;
 }) {
   const formattedHour = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Event, WeatherForecast } from "@shared/schema";
+import { WeatherForecast } from "@shared/schema";
+import { ExpandedEvent } from "@/lib/calendarUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { 
@@ -23,7 +24,7 @@ function MonthCard({
   year: number;
   currentMonth: number;
   currentYear: number;
-  events: Event[];
+  events: ExpandedEvent[];
   onMonthClick: () => void;
 }) {
   const monthDays = getMonthDays(year, month);

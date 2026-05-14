@@ -6,6 +6,7 @@ import {
 } from "@/lib/calendarUtils";
 import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
+import { ExpandedEvent } from "@/lib/calendarUtils";
 import { Event, WeatherForecast } from "@shared/schema";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,7 +15,7 @@ import { getProjectColor } from "@/lib/colorUtils";
 interface CalendarDayProps {
   day: Date;
   currentMonth: number;
-  events: Event[];
+  events: ExpandedEvent[];
   weatherData: WeatherForecast[] | undefined;
   onClick: () => void;
   onEventClick: (eventId: number) => void;
