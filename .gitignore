@@ -4,3 +4,17 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Security: never commit these
+.ssh/
+*.log
+*.pem
+*.key
+%USERPROFILE%.ssh*
+.env
+.env.local
+.env.production
+
+# Replit platform files
+.replit
+replit.nix

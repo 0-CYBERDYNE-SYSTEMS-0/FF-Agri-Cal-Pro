@@ -1,5 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import * as bcrypt from "bcrypt";
 import { storage } from "./storage";
 import { z } from "zod";
 import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast } from "@shared/schema";
@@ -74,6 +75,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.status(500).json({ message: err.message || "Internal Server Error" });
   };
 
+  // Auth middleware
+  const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+    const userId = (req.session as any).userId;
+    if (!userId) return res.status(401).json({ message: "Authentication required" });
+    next();
+  };
+  const getUserId = (req: Request): number => (req.session as any).userId || 1;
+
   // User routes
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
@@ -84,7 +93,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: "Username already exists" });
       }
 
-      const user = await storage.createUser(userData);
+      // Hash the password before storing
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(userData.password, salt);
+
+      const user = await storage.createUser({ ...userData, password: hashedPassword });
       // Don't return password in response
       const { password, ...userResponse } = user;
 
@@ -103,9 +116,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const user = await storage.getUserByUsername(username);
 
-      if (!user || user.password !== password) {
+      if (!user || !(await bcrypt.compare(password, user.password))) {
         return res.status(401).json({ message: "Invalid username or password" });
       }
+
+      // Set session
+      (req.session as any).userId = user.id;
 
       // Don't return password in response
       const { password: _, ...userResponse } = user;
@@ -118,8 +134,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/users/me", async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll return the first user
-      const user = await storage.getUser(1);
+      const userId = getUserId(req);
+      const user = await storage.getUser(userId);
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -138,7 +154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/projects", async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
       const projects = await storage.getProjectsByUser(userId);
       return res.status(200).json(projects);
     } catch (err) {
@@ -161,10 +177,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects", async (req: Request, res: Response) => {
+  app.post("/api/projects", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
       const projectData = insertProjectSchema.parse({ ...req.body, userId });
       const project = await storage.createProject(projectData);
       return res.status(201).json(project);
@@ -173,7 +189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/projects/:id", async (req: Request, res: Response) => {
+  app.put("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const project = await storage.getProject(id);
@@ -189,7 +205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/projects/:id", async (req: Request, res: Response) => {
+  app.delete("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const project = await storage.getProject(id);
@@ -209,7 +225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/events", async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
 
       // If startDate and endDate are provided, filter events by date range
       if (req.query.startDate && req.query.endDate) {
@@ -254,10 +270,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/events", async (req: Request, res: Response) => {
+  app.post("/api/events", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
 
       // Handle both string and Date objects for dates
       const { startDate, endDate, ...restBody } = req.body;
@@ -279,7 +295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/events/:id", async (req: Request, res: Response) => {
+  app.put("/api/events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const event = await storage.getEvent(id);
@@ -295,7 +311,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/events/:id", async (req: Request, res: Response) => {
+  app.delete("/api/events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const event = await storage.getEvent(id);
@@ -405,7 +421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Web search route
-  app.post("/api/search", async (req: Request, res: Response) => {
+  app.post("/api/search", requireAuth, async (req: Request, res: Response) => {
     try {
       const { query } = z.object({
         query: z.string()
@@ -422,7 +438,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/conversations", async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
       const conversations = await storage.getConversationsByUser(userId);
       return res.status(200).json(conversations);
     } catch (err) {
@@ -445,10 +461,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/conversations", async (req: Request, res: Response) => {
+  app.post("/api/conversations", requireAuth, async (req: Request, res: Response) => {
     try {
       // For demo purposes, we'll use user 1
-      const userId = 1;
+      const userId = getUserId(req);
 
       // If no messages are provided, add a weather-aware agricultural greeting
       let messages = req.body.messages || [];
@@ -516,7 +532,7 @@ How can I help with your agricultural planning today?`;
     }
   });
 
-  app.post("/api/conversations/:id/messages", async (req: Request, res: Response) => {
+  app.post("/api/conversations/:id/messages", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const conversation = await storage.getConversation(id);
@@ -562,7 +578,7 @@ How can I help with your agricultural planning today?`;
       const weatherData = await fetchComprehensiveWeather(userLocation);
 
       // Get user's calendar events (using default user ID 1)
-      const userId = 1;
+      const userId = getUserId(req);
       const userEvents = await storage.getEventsByUser(userId);
 
       // Determine current season
@@ -1074,7 +1090,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
             ...eventData,
             startDate: new Date(eventData.startDate),
             endDate: new Date(eventData.endDate),
-            userId: 1, // Default user ID
+            userId: getUserId(req), // Default user ID
           });
 
           // Insert the event using the storage interface
@@ -1091,7 +1107,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           // Validate the event data
           const validatedEvent = insertEventSchema.parse({
             ...eventData,
-            userId: 1, // Default user ID
+            userId: getUserId(req), // Default user ID
           });
 
           // Update the event using the storage interface
@@ -1115,7 +1131,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           console.log("Searching calendar events:", functionArgs);
 
           // Default to user 1 for demo
-          const userId = 1;
+          const userId = getUserId(req);
           let events = [];
 
           // If we have a date range, use that for searching
@@ -1151,7 +1167,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           console.log("Getting or creating project from assistant:", projectData.name);
 
           // Get all projects for user 1
-          const allProjects = await storage.getProjectsByUser(1);
+          const allProjects = await storage.getProjectsByUser(getUserId(req));
 
           // Check if project already exists
           const existingProject = allProjects.find(project => 
@@ -1172,7 +1188,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               status: "active",
               startDate: new Date(),
               endDate: null,
-              userId: 1 // Default user ID
+              userId: getUserId(req) // from session
             });
 
             toolResponse = JSON.stringify({
@@ -1190,7 +1206,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
             file = await storage.getUserFile(fileId);
           } else if (filename) {
             // Find file by name for the user
-            const userFiles = await storage.getUserFilesByUser(1);
+            const userFiles = await storage.getUserFilesByUser(getUserId(req));
             file = userFiles.find(f => f.originalName === filename || f.filename === filename);
           }
 
@@ -1220,11 +1236,11 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
 
           let files;
           if (fileType) {
-            files = await storage.getUserFilesByType(1, fileType);
+            files = await storage.getUserFilesByType(getUserId(req), fileType);
           } else if (projectId) {
             files = await storage.getUserFilesByProject(projectId);
           } else {
-            files = await storage.getUserFilesByUser(1);
+            files = await storage.getUserFilesByUser(getUserId(req));
           }
 
           toolResponse = JSON.stringify({
@@ -1244,7 +1260,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           console.log("Creating user document:", title);
 
           const documentData = {
-            userId: 1, // Default user ID
+            userId: getUserId(req), // Default user ID
             title,
             content,
             documentType: documentType || "note",
@@ -1271,11 +1287,11 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
 
           let documents;
           if (documentType) {
-            documents = await storage.getUserDocumentsByType(1, documentType);
+            documents = await storage.getUserDocumentsByType(getUserId(req), documentType);
           } else if (projectId) {
             documents = await storage.getUserDocumentsByProject(projectId);
           } else {
-            documents = await storage.getUserDocumentsByUser(1);
+            documents = await storage.getUserDocumentsByUser(getUserId(req));
           }
 
           toolResponse = JSON.stringify({
@@ -1370,7 +1386,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
   app.get("/api/events/ics", async (req: Request, res: Response) => {
     try {
       // Demo user id = 1 for simplicity (in this demo app we auto-login as demo user)
-      const userId = 1;
+      const userId = getUserId(req);
 
       // Get all events for the user
       const userEvents = await storage.getEventsByUser(userId);
@@ -1441,7 +1457,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     try {
       // Get location from query params or use default
       const location = (req.query.location as string) || "New York";
-      const userId = 1; // Default demo user
+      const userId = getUserId(req); // Default demo user
 
       // Get weather data
       const weatherData = await fetchComprehensiveWeather(location);
@@ -1503,7 +1519,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       // Convert dates if they're strings
       const parsedData = {
         ...restData,
-        userId: 1, // Default user ID
+        userId: getUserId(req), // Default user ID
         startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
         endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
       };
@@ -1531,7 +1547,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       console.log("Getting or creating project from assistant:", name);
 
       // Get all projects for user 1
-      const allProjects = await storage.getProjectsByUser(1);
+      const allProjects = await storage.getProjectsByUser(getUserId(req));
 
       // Check if project already exists
       const existingProject = allProjects.find(project => 
@@ -1553,7 +1569,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         status: "active",
         startDate: new Date(),
         endDate: null,
-        userId: 1 // Default user ID
+        userId: getUserId(req) // from session
       });
 
       return res.status(200).json({
@@ -1583,7 +1599,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
         // Convert dates if they're strings
         const parsedData = {
           ...restData,
-          userId: 1, // Default user ID
+          userId: getUserId(req), // Default user ID
           startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
           endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
         };
@@ -1664,7 +1680,7 @@ For deleting events, you only need the event ID`;
       }
 
       // Get events that depend on weather
-      const events = await storage.getEventsByUser(1); // Using default user ID 1
+      const events = await storage.getEventsByUser(getUserId(req)); // from session
       const weatherDependentEvents = events.filter(event => event.checkWeather);
 
       const formattedData = formatWeatherData(weatherData);
@@ -1680,7 +1696,7 @@ For deleting events, you only need the event ID`;
   // User File Management Routes
   app.get("/api/files", async (req: Request, res: Response) => {
     try {
-      const userId = 1; // Default demo user
+      const userId = getUserId(req); // Default demo user
       const fileType = req.query.fileType as string;
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
 
@@ -1717,9 +1733,9 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.post("/api/files", async (req: Request, res: Response) => {
+  app.post("/api/files", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = 1; // Default demo user
+      const userId = getUserId(req); // Default demo user
       const fileData = { ...req.body, userId };
       
       const validatedFile = insertUserFileSchema.parse(fileData);
@@ -1731,7 +1747,7 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.put("/api/files/:id", async (req: Request, res: Response) => {
+  app.put("/api/files/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const updatedFile = await storage.updateUserFile(id, req.body);
@@ -1746,7 +1762,7 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.delete("/api/files/:id", async (req: Request, res: Response) => {
+  app.delete("/api/files/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const deleted = await storage.deleteUserFile(id);
@@ -1787,7 +1803,7 @@ For deleting events, you only need the event ID`;
   // User Document Management Routes
   app.get("/api/documents", async (req: Request, res: Response) => {
     try {
-      const userId = 1; // Default demo user
+      const userId = getUserId(req); // Default demo user
       const documentType = req.query.documentType as string;
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
 
@@ -1821,9 +1837,9 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.post("/api/documents", async (req: Request, res: Response) => {
+  app.post("/api/documents", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = 1; // Default demo user
+      const userId = getUserId(req); // Default demo user
       const documentData = { ...req.body, userId };
       
       const validatedDocument = insertUserDocumentSchema.parse(documentData);
@@ -1835,7 +1851,7 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.put("/api/documents/:id", async (req: Request, res: Response) => {
+  app.put("/api/documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const updatedDocument = await storage.updateUserDocument(id, req.body);
@@ -1850,7 +1866,7 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.delete("/api/documents/:id", async (req: Request, res: Response) => {
+  app.delete("/api/documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       const deleted = await storage.deleteUserDocument(id);
