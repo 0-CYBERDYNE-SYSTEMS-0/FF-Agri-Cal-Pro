@@ -9,7 +9,7 @@ import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
 import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
 import { eq } from "drizzle-orm";
-import { events, Event } from "@shared/schema";
+import { events, Event, InsertEvent } from "@shared/schema";
 
 // Helper function to determine the current season based on date
 function getSeasonForDate(date: Date): string {
@@ -1891,6 +1891,123 @@ For deleting events, you only need the event ID`;
       }
       
       return res.status(200).json({ message: "Document deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // ICS Import — parse .ics file and create calendar events
+  app.post("/api/events/import-ics", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { icsContent } = z.object({
+        icsContent: z.string().min(1, "ICS content is required"),
+      }).parse(req.body);
+
+      const userId = getUserId(req);
+      const events: InsertEvent[] = [];
+
+      // Split into VEVENT blocks (handle both \n and \r\n)
+      const normalized = icsContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const blocks = normalized.split("BEGIN:VEVENT");
+      
+      for (let i = 1; i < blocks.length; i++) {
+        const block = blocks[i].split("END:VEVENT")[0];
+        if (!block) continue;
+
+        // Parse folded lines (RFC 5545 line folding: \n followed by space/tab)
+        const unfolded = block.replace(/\n[ \t]/g, "");
+        const lines = unfolded.split("\n");
+
+        let summary = "Imported Event";
+        let description = "";
+        let location = "";
+        let dtstart = "";
+        let dtend = "";
+
+        for (const rawLine of lines) {
+          const colonIdx = rawLine.indexOf(":");
+          if (colonIdx === -1) continue;
+          const prop = rawLine.substring(0, colonIdx).toUpperCase().trim();
+          let value = rawLine.substring(colonIdx + 1).trim();
+          
+          // Unescape ICS special chars
+          value = value.replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\").replace(/\\n/g, "\n");
+
+          switch (prop) {
+            case "SUMMARY": summary = value; break;
+            case "DESCRIPTION": description = value; break;
+            case "LOCATION": location = value; break;
+            case "DTSTART": dtstart = value; break;
+            case "DTEND": dtend = value; break;
+          }
+        }
+
+        if (!dtstart) continue; // Skip events without a start date
+
+        // Parse DTSTART (formats: YYYYMMDDTHHMMSSZ, YYYYMMDDTHHMMSS, YYYYMMDD)
+        const parseICSDate = (s: string): Date | null => {
+          // Remove timezone suffix if present
+          s = s.replace(/Z$/, "");
+          if (s.length === 8) {
+            // All-day: YYYYMMDD
+            const y = parseInt(s.substring(0, 4));
+            const m = parseInt(s.substring(4, 6)) - 1;
+            const d = parseInt(s.substring(6, 8));
+            return new Date(y, m, d, 9, 0, 0);
+          }
+          if (s.length >= 15) {
+            const y = parseInt(s.substring(0, 4));
+            const m = parseInt(s.substring(4, 6)) - 1;
+            const d = parseInt(s.substring(6, 8));
+            const h = parseInt(s.substring(9, 11));
+            const min = parseInt(s.substring(11, 13));
+            const sec = s.length >= 15 ? parseInt(s.substring(13, 15)) : 0;
+            return new Date(y, m, d, h, min, sec);
+          }
+          return null;
+        };
+
+        const startDate = parseICSDate(dtstart);
+        let endDate = parseICSDate(dtend);
+        
+        if (!startDate) continue;
+        if (!endDate) {
+          // Default: 1 hour after start
+          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        }
+
+        events.push({
+          userId,
+          title: summary,
+          description: description || null,
+          startDate,
+          endDate,
+          location: location || null,
+          projectId: null,
+          allDay: dtstart.length === 8, // All-day if date-only
+          checkWeather: true,
+          isRecurring: false,
+          recurringPattern: null,
+        });
+      }
+
+      if (events.length === 0) {
+        return res.status(400).json({ message: "No valid events found in ICS content" });
+      }
+
+      // Create all events
+      const created: Event[] = [];
+      for (const eventData of events) {
+        const valid = insertEventSchema.parse(eventData);
+        const event = await storage.createEvent(valid);
+        created.push(event);
+      }
+
+      return res.status(201).json({
+        message: `Imported ${created.length} events`,
+        count: created.length,
+        events: created,
+      });
     } catch (err) {
       return handleApiError(err, res);
     }

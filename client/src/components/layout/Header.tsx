@@ -71,9 +71,13 @@ export default function Header() {
                 {/* User dropdown menu */}
                 {isUserMenuOpen && (
                   <div id="user-menu" className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10">
-                    <a href="#" className="block px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100">Your Profile</a>
-                    <a href="#" className="block px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100">Settings</a>
-                    <a href="#" onClick={() => logout()} className="block px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100">Sign out</a>
+                    <div className="px-4 py-2 text-sm text-neutral-500 border-b">{user.displayName}</div>
+                    <button 
+                      onClick={() => { logout(); setIsUserMenuOpen(false); }} 
+                      className="block w-full text-left px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
+                    >
+                      Sign out
+                    </button>
                   </div>
                 )}
               </div>
