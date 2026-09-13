@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState, useEffect } from "react";
-import { formatDate } from "@/lib/calendarUtils";
+import { format } from "date-fns";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Project } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getAiSuggestion } from "@/lib/openAiApi";
 import { getProjectColor } from "@/lib/colorUtils";
 import { useAuth } from "@/contexts/AuthContext";
+import MarkdownRenderer from "@/components/ui/markdown-renderer";
 
 interface EventModalProps {
   isOpen: boolean;
@@ -71,15 +72,15 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
       const endTime = new Date(now);
       endTime.setHours(endTime.getHours() + 1);
       
-      setStartDate(formatDate(now, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-      setStartTime(formatTimeForInput(now));
-      
-      setEndDate(formatDate(endTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-      setEndTime(formatTimeForInput(endTime));
-      
+      setStartDate(format(now, "yyyy-MM-dd"));
+      setStartTime(format(now, "HH:mm"));
+
+      setEndDate(format(endTime, "yyyy-MM-dd"));
+      setEndTime(format(endTime, "HH:mm"));
+
       const oneMonthLater = new Date(now);
       oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
-      setRecurrenceEndDate(formatDate(oneMonthLater, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+      setRecurrenceEndDate(format(oneMonthLater, "yyyy-MM-dd"));
     }
   }, [isOpen, selectedDate, projects]);
 
@@ -110,24 +111,24 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
           // Format dates and times
           if (eventData.startDate) {
             const startDateTime = new Date(eventData.startDate);
-            setStartDate(formatDate(startDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-            setStartTime(formatTimeForInput(startDateTime));
+            setStartDate(format(startDateTime, "yyyy-MM-dd"));
+            setStartTime(format(startDateTime, "HH:mm"));
           }
-          
+
           if (eventData.endDate) {
             const endDateTime = new Date(eventData.endDate);
-            setEndDate(formatDate(endDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-            setEndTime(formatTimeForInput(endDateTime));
+            setEndDate(format(endDateTime, "yyyy-MM-dd"));
+            setEndTime(format(endDateTime, "HH:mm"));
           }
-          
+
           // Handle recurring pattern if available
           if (eventData.recurringPattern) {
             setRecurrenceType(eventData.recurringPattern.frequency || "day");
             setRecurrenceInterval(eventData.recurringPattern.interval || 1);
-            
+
             if (eventData.recurringPattern.endDate) {
               const recurrenceEnd = new Date(eventData.recurringPattern.endDate);
-              setRecurrenceEndDate(formatDate(recurrenceEnd, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+              setRecurrenceEndDate(format(recurrenceEnd, "yyyy-MM-dd"));
             }
           }
         } catch (error) {
@@ -178,10 +179,33 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     },
   });
 
-  const formatTimeForInput = (date: Date): string => {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+  const deleteEventMutation = useMutation({
+    mutationFn: async (eventId: number) => {
+      await apiRequest("DELETE", `/api/events/${eventId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      toast({
+        title: "Event deleted",
+        description: "The event has been deleted successfully.",
+      });
+      onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "There was an error deleting the event. Please try again.",
+        variant: "destructive",
+      });
+      console.error("Error deleting event:", error);
+    },
+  });
+
+  const handleDelete = () => {
+    if (!editEventId) return;
+    if (window.confirm(`Delete event "${title}"? This action cannot be undone.`)) {
+      deleteEventMutation.mutate(editEventId);
+    }
   };
 
   // Modify the handleSubmit to prevent duplicate submissions
@@ -230,7 +254,8 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     // Prepare recurring pattern if needed
     let recurringPattern = null;
     if (isRecurring) {
-      const endDate = recurrenceEndDate ? new Date(recurrenceEndDate) : null;
+      // Parse the yyyy-MM-dd input value as local time (matching current behavior)
+      const endDate = recurrenceEndDate ? new Date(`${recurrenceEndDate}T00:00`) : null;
       recurringPattern = {
         frequency: recurrenceType,
         interval: recurrenceInterval,
@@ -351,9 +376,10 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
         if (!event.title) continue;
         
         // Calculate start and end times
-        let startDateTime = new Date(event.suggestedDate || startDate);
+        // startDate is a yyyy-MM-dd string; append a time so it parses as local time
+        let startDateTime = new Date(event.suggestedDate || `${startDate}T00:00`);
         if (isNaN(startDateTime.getTime())) {
-          startDateTime = new Date(startDate);
+          startDateTime = new Date(`${startDate}T00:00`);
         }
         
         // Set start time to 9 AM if not specified
@@ -524,13 +550,21 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
           
           <div>
             <Label htmlFor="event-description">Description</Label>
-            <Textarea 
+            <Textarea
               id="event-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="mt-1"
-              rows={3}
+              rows={8}
             />
+            <p className="text-xs text-neutral-500 mt-1">
+              Markdown supported — steps, materials, rates, safety notes.
+            </p>
+            {description.trim() !== "" && (
+              <div className="mt-2 max-h-48 overflow-y-auto p-3 bg-neutral-50 rounded-md border border-neutral-200 text-sm text-neutral-700">
+                <MarkdownRenderer content={description} className="prose-sm" />
+              </div>
+            )}
           </div>
           
           <div className="flex items-center space-x-2">
@@ -642,13 +676,25 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
               </Button>
             </div>
             
-            <Button 
-              type="submit" 
-              className="bg-primary hover:bg-primary-dark w-full"
-              disabled={eventMutation.isPending}
-            >
-              {eventMutation.isPending ? "Creating..." : "Create Event"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {editEventId && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteEventMutation.isPending}
+                >
+                  {deleteEventMutation.isPending ? "Deleting..." : "Delete"}
+                </Button>
+              )}
+              <Button
+                type="submit"
+                className="bg-primary hover:bg-primary-dark flex-1"
+                disabled={eventMutation.isPending || deleteEventMutation.isPending}
+              >
+                {eventMutation.isPending ? "Saving..." : editEventId ? "Save Changes" : "Create Event"}
+              </Button>
+            </div>
           </div>
         </form>
       </DialogContent>

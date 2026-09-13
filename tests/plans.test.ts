@@ -39,14 +39,33 @@ test("dependencies chain offsets from the referenced event, not the anchor", () 
 });
 
 test("an event cannot depend on itself or a later event", () => {
-  const selfDep = basePayload([{ title: "Bad", offsetDays: 1, dependsOnIndex: 0 }]);
+  // Forward dependencies are rejected by the schema at draft time; build the
+  // invalid payload literally to exercise resolvePlanEvents' own guard too.
+  const selfDep = { events: [{ title: "Bad", offsetDays: 1, dependsOnIndex: 0 }], sources: [], summary: "" } as never;
   assert.throws(() => resolvePlanEvents(selfDep, new Date(2026, 0, 1)), PlanResolutionError);
 
-  const forwardDep = basePayload([
-    { title: "First", offsetDays: 1 },
-    { title: "Second", offsetDays: 1, dependsOnIndex: 1 },
-  ]);
+  const forwardDep = {
+    events: [
+      { title: "First", offsetDays: 1 },
+      { title: "Second", offsetDays: 1, dependsOnIndex: 1 },
+    ],
+    sources: [],
+    summary: "",
+  } as never;
   assert.throws(() => resolvePlanEvents(forwardDep, new Date(2026, 0, 1)), PlanResolutionError);
+});
+
+test("the schema rejects forward dependencies at draft time", () => {
+  const forwardDep = {
+    events: [
+      { title: "First", offsetDays: 1 },
+      { title: "Second", offsetDays: 1, dependsOnIndex: 1 },
+    ],
+  };
+  assert.throws(() => planPayloadSchema.parse(forwardDep), /dependsOnIndex/);
+
+  const selfDep = { events: [{ title: "Bad", offsetDays: 1, dependsOnIndex: 0 }] };
+  assert.throws(() => planPayloadSchema.parse(selfDep), /dependsOnIndex/);
 });
 
 test("dependency chains cross month boundaries correctly", () => {

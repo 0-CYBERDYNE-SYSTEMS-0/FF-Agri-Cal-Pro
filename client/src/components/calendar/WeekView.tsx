@@ -4,6 +4,7 @@ import { ExpandedEvent } from "@/lib/calendarUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { formatDate, isToday, getEventsForDay } from "@/lib/calendarUtils";
+import { getProjectColor } from "@/lib/colorUtils";
 import { useState } from "react";
 import EventModal from "./EventModal";
 
@@ -46,20 +47,17 @@ function HourRow({
             className={`border-l border-neutral-200 p-1 min-h-[60px] ${isToday(day) ? 'bg-accent-light/20' : ''}`}
             onClick={() => onCellClick(dateForHour)}
           >
-            {hourEvents.map(event => (
-              <div 
-                key={event.id} 
-                className={`text-xs p-1 rounded mb-1 overflow-hidden ${
-                  event.projectId === 1 
-                    ? "bg-primary text-white" 
-                    : event.projectId === 2 
-                      ? "bg-secondary text-white" 
-                      : "bg-accent rounded text-primary-dark"
-                }`}
+            {hourEvents.map(event => {
+              const projectColor = getProjectColor(event.projectId || undefined);
+              return (
+              <div
+                key={event.id}
+                className={`text-xs p-1 rounded mb-1 overflow-hidden ${projectColor.bg} ${projectColor.text}`}
               >
                 {event.title}
               </div>
-            ))}
+              );
+            })}
           </div>
         );
       })}

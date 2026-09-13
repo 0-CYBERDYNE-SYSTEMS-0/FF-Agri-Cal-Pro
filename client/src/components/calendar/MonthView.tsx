@@ -119,21 +119,8 @@ export default function MonthView({ weatherData }: MonthViewProps) {
     }
   };
 
-  // Listen for custom events to open the modal from elsewhere
-  useEffect(() => {
-    const handleOpenModal = () => {
-      console.log("Received open-event-modal event");
-      setSelectedDate(new Date());
-      setSelectedEventId(undefined);
-      setIsModalOpen(true);
-    };
-
-    window.addEventListener('open-event-modal', handleOpenModal);
-    
-    return () => {
-      window.removeEventListener('open-event-modal', handleOpenModal);
-    };
-  }, []);
+  // Note: the "New Event" header button is handled by the Calendar page,
+  // which owns the page-level listener for the custom event and its own modal.
 
   if (isLoading) {
     return (

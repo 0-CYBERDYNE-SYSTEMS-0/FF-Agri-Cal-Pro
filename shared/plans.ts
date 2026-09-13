@@ -33,11 +33,26 @@ export const planSourceSchema = z.object({
   url: z.string().url().max(1000),
 });
 
-export const planPayloadSchema = z.object({
-  events: z.array(planEventSpecSchema).min(1).max(100),
-  sources: z.array(planSourceSchema).default([]),
-  summary: z.string().max(20000).default(""),
-});
+export const planPayloadSchema = z
+  .object({
+    events: z.array(planEventSpecSchema).min(1).max(100),
+    sources: z.array(planSourceSchema).default([]),
+    summary: z.string().max(20000).default(""),
+  })
+  .superRefine((payload, ctx) => {
+    // Dependency ordering is validated here so an invalid chain is rejected
+    // at draft time, before anything is stored or applied.
+    payload.events.forEach((spec, index) => {
+      const dependsOn = spec.dependsOnIndex ?? null;
+      if (dependsOn !== null && dependsOn >= index) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["events", index, "dependsOnIndex"],
+          message: `must reference an earlier event (got index ${dependsOn} at position ${index})`,
+        });
+      }
+    });
+  });
 
 export type PlanEventSpec = z.infer<typeof planEventSpecSchema>;
 export type PlanSource = z.infer<typeof planSourceSchema>;

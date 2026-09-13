@@ -4,6 +4,7 @@ import { ExpandedEvent } from "@/lib/calendarUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { formatDate, isToday, getEventsForDay } from "@/lib/calendarUtils";
+import { getProjectColor } from "@/lib/colorUtils";
 import { useState } from "react";
 import EventModal from "./EventModal";
 
@@ -30,16 +31,12 @@ function TimeSlot({
         {formattedHour}
       </div>
       <div className="flex-1 p-1 min-h-[60px]" onClick={onClick}>
-        {hourEvents.map(event => (
-          <div 
-            key={event.id} 
-            className={`text-sm p-2 rounded mb-1 ${
-              event.projectId === 1 
-                ? "bg-primary text-white" 
-                : event.projectId === 2 
-                  ? "bg-secondary text-white" 
-                  : "bg-accent rounded text-primary-dark"
-            }`}
+        {hourEvents.map(event => {
+          const projectColor = getProjectColor(event.projectId || undefined);
+          return (
+          <div
+            key={event.id}
+            className={`text-sm p-2 rounded mb-1 ${projectColor.bg} ${projectColor.text}`}
           >
             {event.title}
             <div className="text-xs mt-1 opacity-90">
@@ -53,7 +50,8 @@ function TimeSlot({
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

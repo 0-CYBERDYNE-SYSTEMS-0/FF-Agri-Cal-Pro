@@ -136,3 +136,84 @@ export const updateUserDocumentRouteSchema = z.object({
   tags: z.array(z.string()).nullable().optional(),
   isPublic: z.boolean().nullable().optional(),
 }).strict();
+
+// A real IANA time zone, verified the same way the routes helper does it.
+// Null is tested FIRST so it clears the zone instead of failing validation.
+const timeZoneInput = z.union([
+  z.null(),
+  z.string().refine(tz => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  }, { message: "Invalid IANA time zone" }),
+]);
+
+// Farm profile upsert (PUT /api/farm) — name required, everything else
+// optional/nullable. Strict rejects userId so a body cannot change ownership.
+export const upsertFarmRouteSchema = z.object({
+  name: z.string().min(1),
+  locationName: z.string().nullable().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  timeZone: timeZoneInput.optional(),
+  growingZone: z.string().nullable().optional(),
+  totalAcres: z.number().min(0).nullable().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+// Fields (create then partial update; strict rejects userId/id/createdAt)
+export const createFieldRouteSchema = z.object({
+  name: z.string().min(1),
+  acres: z.number().min(0).nullable().optional(),
+  soilType: z.string().nullable().optional(),
+  currentCrop: z.string().nullable().optional(),
+  status: z.string().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+export const updateFieldRouteSchema = createFieldRouteSchema.partial().strict();
+
+// Crops (fieldId is validated against the user's own fields in the route)
+export const createCropRouteSchema = z.object({
+  fieldId: z.number().int().nullable().optional(),
+  name: z.string().min(1),
+  variety: z.string().nullable().optional(),
+  plantedAt: dateInput.optional(),
+  expectedHarvestAt: dateInput.optional(),
+  status: z.string().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+export const updateCropRouteSchema = createCropRouteSchema.partial().strict();
+
+// Equipment
+export const createEquipmentRouteSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().nullable().optional(),
+  status: z.string().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+export const updateEquipmentRouteSchema = createEquipmentRouteSchema.partial().strict();
+
+// Buildings
+export const createBuildingRouteSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+export const updateBuildingRouteSchema = createBuildingRouteSchema.partial().strict();
+
+// Staff
+export const createStaffRouteSchema = z.object({
+  name: z.string().min(1),
+  role: z.string().nullable().optional(),
+  contact: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+}).strict();
+
+export const updateStaffRouteSchema = createStaffRouteSchema.partial().strict();

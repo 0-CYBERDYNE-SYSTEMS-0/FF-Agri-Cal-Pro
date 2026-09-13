@@ -25,7 +25,19 @@ import {
   updateProjectRouteSchema,
   updateUserFileRouteSchema,
   updateUserDocumentRouteSchema,
+  upsertFarmRouteSchema,
+  createFieldRouteSchema,
+  updateFieldRouteSchema,
+  createCropRouteSchema,
+  updateCropRouteSchema,
+  createEquipmentRouteSchema,
+  updateEquipmentRouteSchema,
+  createBuildingRouteSchema,
+  updateBuildingRouteSchema,
+  createStaffRouteSchema,
+  updateStaffRouteSchema,
 } from "./toolSchemas";
+import { buildFarmContextLines } from "./farmContext";
 
 // Helper function to determine the current season based on date and hemisphere
 function getSeasonForDate(date: Date, northernHemisphere: boolean): string {
@@ -128,6 +140,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const project = await storage.getProject(projectId);
     if (!project || project.userId !== userId) {
       return `Project ${projectId} was not found`;
+    }
+    return null;
+  };
+
+  // Validates a fieldId argument against the user's own fields
+  const ownedFieldOrError = async (userId: number, fieldId: number): Promise<string | null> => {
+    const field = await storage.getField(fieldId);
+    if (!field || field.userId !== userId) {
+      return `Field ${fieldId} was not found`;
     }
     return null;
   };
@@ -1075,6 +1096,11 @@ ${upcomingEvents.map(event => {
 ${mentionedProjects.map(project => `- [Project #${project.id}] ${project.name}: ${project.description || "No description"} (status: ${project.status})`).join('\n')}`);
       }
 
+      // Farm profile ground truth: farm details plus fields, crops, equipment,
+      // buildings, and staff (compact; long lists are truncated)
+      const farmContextLines = await buildFarmContextLines(userId, storage);
+      contextLines.push(...farmContextLines);
+
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
 
 CONTEXT (built fresh for this request; it overrides anything from earlier in the conversation):
@@ -1738,6 +1764,319 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       }
 
       return res.status(200).json({ message: "Document deleted successfully" });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Farm profile routes — one farm per user, get-or-create semantics on PUT
+  app.get("/api/farm", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const farm = await storage.getFarmByUser(getUserId(req));
+      return res.status(200).json({ farm: farm ?? null });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/farm", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+
+      // Strict schema: rejects attempts to change userId through the body
+      const farmData = upsertFarmRouteSchema.parse(req.body);
+
+      const existing = await storage.getFarmByUser(userId);
+      const farm = existing
+        ? await storage.updateFarm(existing.id, farmData)
+        : await storage.createFarm({ ...farmData, userId });
+
+      if (!farm) {
+        return res.status(404).json({ message: "Farm not found" });
+      }
+
+      return res.status(200).json(farm);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Field routes
+  app.get("/api/fields", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const fields = await storage.getFieldsByUser(getUserId(req));
+      return res.status(200).json(fields);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/fields", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const fieldData = createFieldRouteSchema.parse(req.body);
+      const field = await storage.createField({ ...fieldData, userId });
+      return res.status(201).json(field);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/fields/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const field = await ownedOr404(req, res, () => storage.getField(id));
+      if (!field) return;
+
+      const updates = updateFieldRouteSchema.parse(req.body);
+      const updatedField = await storage.updateField(id, updates);
+
+      if (!updatedField) {
+        return res.status(404).json({ message: "Field not found" });
+      }
+
+      return res.status(200).json(updatedField);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/fields/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const field = await ownedOr404(req, res, () => storage.getField(id));
+      if (!field) return;
+
+      await storage.deleteField(id);
+      return res.status(204).end();
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Crop routes (fieldId must reference one of the user's own fields)
+  app.get("/api/crops", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const crops = await storage.getCropsByUser(getUserId(req));
+      return res.status(200).json(crops);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/crops", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const cropData = createCropRouteSchema.parse(req.body);
+
+      if (cropData.fieldId !== undefined && cropData.fieldId !== null) {
+        const fieldError = await ownedFieldOrError(userId, cropData.fieldId);
+        if (fieldError) {
+          return res.status(400).json({ message: fieldError });
+        }
+      }
+
+      const crop = await storage.createCrop({ ...cropData, userId });
+      return res.status(201).json(crop);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/crops/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const crop = await ownedOr404(req, res, () => storage.getCrop(id));
+      if (!crop) return;
+
+      const updates = updateCropRouteSchema.parse(req.body);
+
+      if (updates.fieldId !== undefined && updates.fieldId !== null) {
+        const fieldError = await ownedFieldOrError(getUserId(req), updates.fieldId);
+        if (fieldError) {
+          return res.status(400).json({ message: fieldError });
+        }
+      }
+
+      const updatedCrop = await storage.updateCrop(id, updates);
+
+      if (!updatedCrop) {
+        return res.status(404).json({ message: "Crop not found" });
+      }
+
+      return res.status(200).json(updatedCrop);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/crops/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const crop = await ownedOr404(req, res, () => storage.getCrop(id));
+      if (!crop) return;
+
+      await storage.deleteCrop(id);
+      return res.status(204).end();
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Equipment routes
+  app.get("/api/equipment", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const equipment = await storage.getEquipmentByUser(getUserId(req));
+      return res.status(200).json(equipment);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/equipment", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const equipmentData = createEquipmentRouteSchema.parse(req.body);
+      const item = await storage.createEquipment({ ...equipmentData, userId });
+      return res.status(201).json(item);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/equipment/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const item = await ownedOr404(req, res, () => storage.getEquipment(id));
+      if (!item) return;
+
+      const updates = updateEquipmentRouteSchema.parse(req.body);
+      const updatedItem = await storage.updateEquipment(id, updates);
+
+      if (!updatedItem) {
+        return res.status(404).json({ message: "Equipment not found" });
+      }
+
+      return res.status(200).json(updatedItem);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/equipment/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const item = await ownedOr404(req, res, () => storage.getEquipment(id));
+      if (!item) return;
+
+      await storage.deleteEquipment(id);
+      return res.status(204).end();
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Building routes
+  app.get("/api/buildings", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const buildings = await storage.getBuildingsByUser(getUserId(req));
+      return res.status(200).json(buildings);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/buildings", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const buildingData = createBuildingRouteSchema.parse(req.body);
+      const building = await storage.createBuilding({ ...buildingData, userId });
+      return res.status(201).json(building);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/buildings/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const building = await ownedOr404(req, res, () => storage.getBuilding(id));
+      if (!building) return;
+
+      const updates = updateBuildingRouteSchema.parse(req.body);
+      const updatedBuilding = await storage.updateBuilding(id, updates);
+
+      if (!updatedBuilding) {
+        return res.status(404).json({ message: "Building not found" });
+      }
+
+      return res.status(200).json(updatedBuilding);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/buildings/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const building = await ownedOr404(req, res, () => storage.getBuilding(id));
+      if (!building) return;
+
+      await storage.deleteBuilding(id);
+      return res.status(204).end();
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Staff routes
+  app.get("/api/staff", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const staff = await storage.getStaffByUser(getUserId(req));
+      return res.status(200).json(staff);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/staff", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const staffData = createStaffRouteSchema.parse(req.body);
+      const member = await storage.createStaffMember({ ...staffData, userId });
+      return res.status(201).json(member);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.put("/api/staff/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const member = await ownedOr404(req, res, () => storage.getStaffMember(id));
+      if (!member) return;
+
+      const updates = updateStaffRouteSchema.parse(req.body);
+      const updatedMember = await storage.updateStaffMember(id, updates);
+
+      if (!updatedMember) {
+        return res.status(404).json({ message: "Staff member not found" });
+      }
+
+      return res.status(200).json(updatedMember);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.delete("/api/staff/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const member = await ownedOr404(req, res, () => storage.getStaffMember(id));
+      if (!member) return;
+
+      await storage.deleteStaffMember(id);
+      return res.status(204).end();
     } catch (err) {
       return handleApiError(err, res);
     }

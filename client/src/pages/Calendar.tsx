@@ -11,10 +11,11 @@ import WeatherRow from "@/components/weather/WeatherRow";
 import ProjectCard from "@/components/project/ProjectCard";
 import { useLocation } from "wouter";
 import { useLocation as useLoc } from "@/contexts/LocationContext";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWeather } from "@/hooks/use-weather";
 import { useAuth } from "@/contexts/AuthContext";
+import EventModal from "@/components/calendar/EventModal";
 
 export default function Calendar() {
   const { view } = useCalendar();
@@ -22,6 +23,19 @@ export default function Calendar() {
   const { requestLocationPermission, location } = useLoc();
   const [locationRequested, setLocationRequested] = useState(false);
   const { user } = useAuth();
+  const [quickEventDate, setQuickEventDate] = useState<Date | null>(null);
+  const [isQuickModalOpen, setIsQuickModalOpen] = useState(false);
+
+  // The header "New Event" button dispatches this custom event; the listener
+  // lives here so the button works in every view, not just the month grid.
+  useEffect(() => {
+    const handleOpenModal = () => {
+      setQuickEventDate(new Date());
+      setIsQuickModalOpen(true);
+    };
+    window.addEventListener("open-event-modal", handleOpenModal);
+    return () => window.removeEventListener("open-event-modal", handleOpenModal);
+  }, []);
 
   const handleGetLocation = () => {
     requestLocationPermission();
@@ -119,6 +133,13 @@ export default function Calendar() {
         <CalendarHeader />
         {calendarView}
       </div>
+
+      {/* Modal opened by the header "New Event" button in any view */}
+      <EventModal
+        isOpen={isQuickModalOpen}
+        onClose={() => setIsQuickModalOpen(false)}
+        selectedDate={quickEventDate}
+      />
 
       {/* Right Sidebar - Weather */}
       <div className="hidden lg:block lg:w-1/5 lg:min-w-[250px] sticky top-6 self-start">
