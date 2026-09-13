@@ -2410,6 +2410,129 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     }
   });
 
+  // Proactive agent routes (Pillar 3): proposals are pre-made change sets
+  // awaiting the farmer's decision. Nothing applies without approval.
+
+  app.get("/api/proposals", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const proposals = req.query.status === "pending"
+        ? await storage.getPendingProposalsByUser(userId)
+        : await storage.getProposalsByUser(userId);
+      return res.status(200).json(proposals);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  const ownedPendingProposalOr400 = async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id);
+    const proposal = await ownedOr404(req, res, () => storage.getProposal(id));
+    if (!proposal) return null;
+    if (proposal.status !== "pending") {
+      res.status(409).json({ message: `This proposal was already ${proposal.status}` });
+      return null;
+    }
+    return proposal;
+  };
+
+  app.post("/api/proposals/:id/approve", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const proposal = await ownedPendingProposalOr400(req, res);
+      if (!proposal) return;
+
+      // Apply every change in the set, verifying ownership of each event.
+      const changeset = Array.isArray(proposal.changeset) ? proposal.changeset : [];
+      const appliedEvents: Event[] = [];
+      for (const change of changeset) {
+        if (!change || typeof change.eventId !== "number") continue;
+        const event = await storage.getEvent(change.eventId);
+        if (!event || event.userId !== getUserId(req)) {
+          return res.status(422).json({ message: `Event ${change.eventId} in this proposal no longer exists` });
+        }
+        const updates = updateEventRouteSchema.parse(change.updates ?? {});
+        const updated = await storage.updateEvent(change.eventId, updates);
+        if (updated) appliedEvents.push(updated);
+      }
+
+      const decided = await storage.updateProposal(proposal.id, {
+        status: "approved",
+        decidedAt: new Date(),
+      });
+      await storage.createNotification({
+        userId: getUserId(req),
+        proposalId: proposal.id,
+        type: "applied",
+        title: `Applied: ${proposal.title}`,
+        body: appliedEvents.length > 0
+          ? `${appliedEvents.length} event(s) were updated.`
+          : "Reviewed — no automatic changes were needed.",
+      });
+
+      return res.status(200).json({ proposal: decided, appliedEvents });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/proposals/:id/decline", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const proposal = await ownedPendingProposalOr400(req, res);
+      if (!proposal) return;
+
+      const decided = await storage.updateProposal(proposal.id, {
+        status: "declined",
+        decidedAt: new Date(),
+      });
+      return res.status(200).json(decided);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Manual trigger: run the watch for the signed-in farmer right now
+  app.post("/api/agent/run", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { runWeatherWatch } = await import("./scheduler");
+      const result = await runWeatherWatch({ userId: getUserId(req) });
+      return res.status(200).json(result);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Notifications inbox (behind the bell)
+  app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const notifications = await storage.getNotificationsByUser(getUserId(req));
+      const unreadCount = notifications.filter(n => !n.read).length;
+      return res.status(200).json({ notifications, unreadCount });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/notifications/:id/read", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const notification = await ownedOr404(req, res, () => storage.getNotification(id));
+      if (!notification) return;
+      const updated = await storage.markNotificationRead(id, true);
+      return res.status(200).json(updated);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/notifications/read-all", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const count = await storage.markAllNotificationsRead(getUserId(req));
+      return res.status(200).json({ marked: count });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
   // Create HTTP server
   const httpServer = createServer(app);
 

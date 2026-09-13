@@ -57,6 +57,7 @@ export interface IStorage {
   getFarmByUser(userId: number): Promise<Farm | undefined>;
   createFarm(farm: UpsertFarm): Promise<Farm>;
   updateFarm(id: number, farm: Partial<Farm>): Promise<Farm | undefined>;
+  getAllFarmUserIds(): Promise<number[]>;
 
   // Field methods
   getField(id: number): Promise<Field | undefined>;
@@ -107,6 +108,7 @@ export interface IStorage {
   updateProposal(id: number, proposal: Partial<Proposal>): Promise<Proposal | undefined>;
 
   // Notification methods (inbox behind the bell)
+  getNotification(id: number): Promise<Notification | undefined>;
   getNotificationsByUser(userId: number): Promise<Notification[]>;
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationRead(id: number, read: boolean): Promise<Notification | undefined>;
@@ -902,6 +904,10 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  async getAllFarmUserIds(): Promise<number[]> {
+    return Array.from(this.farms.values()).map(farm => farm.userId);
+  }
+
   // Field methods
   async getField(id: number): Promise<Field | undefined> {
     return this.fields.get(id);
@@ -1159,6 +1165,10 @@ export class MemStorage implements IStorage {
   }
 
   // Notification methods
+  async getNotification(id: number): Promise<Notification | undefined> {
+    return this.notifications.get(id);
+  }
+
   async getNotificationsByUser(userId: number): Promise<Notification[]> {
     return Array.from(this.notifications.values())
       .filter(notification => notification.userId === userId)
@@ -1442,6 +1452,11 @@ export class DbStorage implements IStorage {
     return rows[0];
   }
 
+  async getAllFarmUserIds(): Promise<number[]> {
+    const rows = await this.db.select({ userId: farms.userId }).from(farms);
+    return rows.map(row => row.userId);
+  }
+
   // Field methods
   async getField(id: number): Promise<Field | undefined> {
     const rows = await this.db.select().from(fields).where(eq(fields.id, id)).limit(1);
@@ -1616,6 +1631,11 @@ export class DbStorage implements IStorage {
   }
 
   // Notification methods
+  async getNotification(id: number): Promise<Notification | undefined> {
+    const rows = await this.db.select().from(notifications).where(eq(notifications.id, id)).limit(1);
+    return rows[0];
+  }
+
   async getNotificationsByUser(userId: number): Promise<Notification[]> {
     return this.db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt));
   }

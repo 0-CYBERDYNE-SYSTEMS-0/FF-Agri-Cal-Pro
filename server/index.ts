@@ -6,6 +6,7 @@ import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
+import { startScheduler } from "./scheduler";
 import { setupVite, serveStatic, log } from "./vite";
 import { checkDatabaseConnection, getPool, hasDatabase } from "../db";
 
@@ -135,6 +136,12 @@ app.use((req, res, next) => {
   server.listen(port, () => {
     log(`serving on port ${port} (${app.get("env")} mode)`);
   });
+
+  // Proactive agent: periodic weather/conflict watch (set
+  // AGENT_WATCH_ENABLED=0 to disable)
+  if (process.env.AGENT_WATCH_ENABLED !== "0") {
+    startScheduler();
+  }
 })();
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
