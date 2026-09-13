@@ -173,9 +173,40 @@ DELETE /api/projects/:id         // Delete project
 POST   /api/conversations/:id/messages // Send a chat message
 GET    /api/conversations        // Chat history
 
+// Farm Profile (the app's memory of your operation)
+GET    /api/farm                 // Farm profile (null when not configured)
+PUT    /api/farm                 // Create-or-update the profile
+GET/POST/PUT/DELETE /api/fields      // Fields & growing areas
+GET/POST/PUT/DELETE /api/crops       // Crop plantings
+GET/POST/PUT/DELETE /api/equipment   // Equipment inventory
+GET/POST/PUT/DELETE /api/buildings   // Buildings & infrastructure
+GET/POST/PUT/DELETE /api/staff       // Staff & labor
+
+// Plans (researched, approval-gated event batches)
+POST   /api/plans/generate       // Research a goal → plan draft (no events written)
+GET    /api/plans                // List plans
+GET    /api/plans/:id            // Read a plan
+GET    /api/plans/:id/preview    // Resolve concrete dates without applying
+POST   /api/plans/:id/apply      // Approve: create all events in one transaction
+POST   /api/plans/:id/dismiss    // Discard a draft
+
+// Proactive Agent
+GET    /api/proposals            // Agent proposals (pre-made change sets)
+POST   /api/proposals/:id/approve // Apply the change set
+POST   /api/proposals/:id/decline // Decline (never re-raised)
+POST   /api/agent/run            // Trigger the watch now
+GET    /api/notifications        // Inbox (unread count included)
+POST   /api/notifications/:id/read
+POST   /api/notifications/read-all
+
 // Weather Services (Open-Meteo)
 GET    /api/weather              // Current conditions + 7-day forecast
 ```
+
+## `> THE THREE PILLARS`
+1. **It knows the farm** — farm profile, fields, crops, equipment, buildings, and staff (all optional) are stored and injected into every assistant answer.
+2. **It researches and plans** — say "I want to plant a vegetable garden": the assistant researches verified sources, then composes a dependency-linked plan draft (timings, gestation periods, markdown SOP notes per event) that you review and approve before anything touches the calendar.
+3. **It manages proactively** — a background watch joins weather-dependent events against the forecast (and detects same-location conflicts), drafts pre-made changes with evidence, and surfaces them via the notification bell for one-click approval.
 
 ## `> DATABASE_SCHEMA`
 ```sql
@@ -184,7 +215,20 @@ users                 # User authentication & profiles
 projects              # Agricultural projects
 events                # Calendar events with weather linking
 conversations         # AI chat history
-weather_cache         # Optimized weather data caching
+weather_cache         # Persisted daily weather snapshots (agent history)
+
+-- Farm memory
+farms                 # One farm profile per user (all fields optional)
+fields                # Fields & growing areas
+crops                 # Crop plantings in the ground or planned
+equipment             # Tractors, implements, tools
+buildings             # Barns, greenhouses, sheds
+staff                 # Crew and labor
+
+-- Planning & the agent
+plans                 # Researched plan drafts (applied atomically on approval)
+proposals             # Agent change sets awaiting approve/decline
+notifications         # Inbox behind the bell
 
 ## `> DEVELOPMENT`
 ```bash

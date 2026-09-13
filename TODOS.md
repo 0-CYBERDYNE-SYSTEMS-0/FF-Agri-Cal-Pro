@@ -1,43 +1,70 @@
 # FF-Agri-Cal-Pro: Status
 
-## Release v2 (branch: release/v2) — work in progress
+## Release v2 (branch: release/v2)
 
-### Done (earlier phases)
-- Branch `release/v2` created, original code safe on `release/v1`
-- 3 Replit deps stripped from package.json + vite.config.ts
-- Removed 11 Replit artifacts (replit.nix, attached_assets/, repomix.xml)
-- .gitignore hardened against future contamination
-- AuthContext.login() → POST /api/auth/login (was hitting wrong endpoint)
-- POST /api/auth/logout — destroys session + clears cookie
-- GET /api/auth/status — session check
-- Sample data password bcrypt-hashed
-- CalendarContext fetches events via useQuery, shared across all views
-- Month/Week/Day/Year views use `useCalendar().events` — no independent queries
-- Delete project button w/ confirmation
-- Files page stats driven by API
-
-### Done (reliability pass, uncommitted)
-- Storage: Drizzle over `pg` (node-postgres) against the existing PostgreSQL
-  schema; in-memory storage only via explicit `MEM_STORAGE=1`
+### Done — reliability pass (commit `bb6b018`)
+- Storage: Drizzle over `pg` against the existing PostgreSQL schema;
+  in-memory storage only via explicit `MEM_STORAGE=1`
 - Auth/ownership: no user-1 fallback, no demo auto-login; every private route
   and assistant tool checks the session user and record ownership
 - Assistant: bounded tool loop (all tool calls executed, results per call ID),
   single configurable model (no model cascade), partial-result reporting
-- Calendar: single range-based event expansion (no fixed ±2-year window,
-  no timers/forceRender/remount keys), month-end clamp + DST-safe recurrence,
-  multi-day overlap assignment
+- Calendar: single range-based event expansion, month-end clamp + DST-safe
+  recurrence, multi-day overlap assignment
 - ICS: one shared parse/serialize implementation, strict per-event validation,
   transactional import, UID-based duplicate skip on repeat import
-- Route order fixed: `/api/events/ics` and `/api/events/weather-dependent`
-  registered before `/api/events/:id`
 - Session store: connect-pg-simple sharing the pg pool; rate limiter registered
   before API routes; `trust proxy` enabled for secure cookies behind a proxy
 - Events table gained a nullable `uid` column (for ICS duplicate detection)
 - Focused regression tests via `node:test` (`npm test`)
 
+### Done — the three pillars (commits `a7eacfb` → `e5866f9`)
+Pillar 1 — the program knows the farm:
+- Farm profile (one per user, all-optional), fields, crops, equipment,
+  buildings, staff: schema, storage (both backends), REST APIs, Farm page
+- Farm context injected into every assistant request (compact, truncated)
+- Documents page (the API existed; the UI was missing); assistant-written
+  plans and notes are now readable
+- `read_user_file` returns real stored content (text types, excerpt cap);
+  binary formats fail honestly
+- Weather snapshots persist daily into `weather_cache`
+
+Pillar 2 — research-grade plans:
+- Research fixed: no default recency bias, current Sonar model, 2000-token
+  budget, structured citations, failures THROW (never error-strings-as-results)
+- Plans: research → draft (relative offsets + dependency chains + markdown
+  SOP notes + sources) → preview (server-resolved dates) → apply-all-in-one-
+  transaction or dismiss; single-apply guard; Plan Composer UI on the calendar
+- Chat `create_plan_draft` tool: the assistant submits reviewable drafts
+  instead of writing events directly
+- Assistant events support allDay + recurrence; EventModal delete UI,
+  locale-safe dates, markdown descriptions with live preview
+
+Pillar 3 — the proactive farm manager:
+- Background weather/conflict watch (`server/scheduler.ts`, every 6h by
+  default, injectable forecast for tests) joining checkWeather events against
+  the 7-day forecast; same-location overlap detection incl. recurring instances
+- Proposals: pre-made change sets with rationale + forecast evidence;
+  approve applies atomically; declined proposals are never re-raised
+- Notification bell: real inbox (unread count, 30s polling, Apply/Dismiss,
+  mark read/all); POST /api/agent/run triggers a watch on demand
+- The vision scenario is a regression test: rainy-day planting → proposal
+  moves it to the next workable day → approval moves the event
+
+### Verified
+- `npm run check` clean; `npm test` 70/70 passing
+- Production build succeeds (`npm run build`)
+- E2E smoke against the dev database: register → login → farm upsert →
+  field → crop → plan preview → plan apply → double-apply 409 → agent run
+  against the live Open-Meteo forecast → notifications endpoints → cleanup
+
 ### Remaining (known gaps)
-- End-to-end browser scenario not yet run by the coordinator
-- Default chat model (`gpt-4.1-mini`) not verified against a live OpenAI
-  account in this environment — set `CHAT_MODEL` if unavailable
-- Registration UI exists (Login page toggle); no password reset flow
+- Live model verification: no OPENAI_API_KEY / PERPLEXITY_API_KEY in this
+  environment — set both, and set `CHAT_MODEL` if `gpt-4.1-mini` is
+  unavailable on the account. Research and plan generation fail loudly
+  (502) until the keys are present.
+- Password reset flow (registration UI exists)
 - Mobile polish for small screens
+- Email/push notification channels (in-app inbox only for now)
+- History/yield logging, frost-date & growing-degree intelligence,
+  equipment/staff conflict scheduling beyond same-location overlaps
