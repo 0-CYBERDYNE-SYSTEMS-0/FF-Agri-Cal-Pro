@@ -7,9 +7,11 @@ import { FileText, Upload, Archive, HardDrive } from "lucide-react";
 import FileManager from "@/components/files/FileManager";
 import { UserFile } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Files() {
   const [activeTab, setActiveTab] = useState("all");
+  const { user } = useAuth();
 
   const { data: files = [], isLoading } = useQuery<UserFile[]>({
     queryKey: ["/api/files"],
@@ -17,6 +19,7 @@ export default function Files() {
       const response = await apiRequest("GET", "/api/files");
       return response.json();
     },
+    enabled: !!user,
   });
 
   const totalFiles = files.length;

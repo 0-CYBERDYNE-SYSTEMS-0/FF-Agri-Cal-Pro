@@ -4,7 +4,6 @@ import MonthView from "@/components/calendar/MonthView";
 import WeekView from "@/components/calendar/WeekView";
 import DayView from "@/components/calendar/DayView";
 import YearView from "@/components/calendar/YearView";
-import ViewDebugger from "@/components/calendar/ViewDebugger";
 import { useQuery } from "@tanstack/react-query";
 import { Project } from "@shared/schema";
 import { WeatherForecast } from "@shared/schema";
@@ -12,23 +11,17 @@ import WeatherRow from "@/components/weather/WeatherRow";
 import ProjectCard from "@/components/project/ProjectCard";
 import { useLocation } from "wouter";
 import { useLocation as useLoc } from "@/contexts/LocationContext";
-import { useEffect, useState, useMemo } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWeather } from "@/hooks/use-weather";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Calendar() {
-  const { view, forceRender } = useCalendar();
+  const { view } = useCalendar();
   const [_, setLocation] = useLocation();
   const { requestLocationPermission, location } = useLoc();
   const [locationRequested, setLocationRequested] = useState(false);
-  const [lastRenderedView, setLastRenderedView] = useState(view);
-
-  // Log view changes for debugging
-  useEffect(() => {
-    console.log("Current calendar view:", view);
-    // Update the last rendered view to track changes
-    setLastRenderedView(view);
-  }, [view, forceRender]);
+  const { user } = useAuth();
 
   const handleGetLocation = () => {
     requestLocationPermission();
@@ -37,28 +30,26 @@ export default function Calendar() {
 
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
+    enabled: !!user,
   });
 
   // Use the useWeather hook which properly handles location updates
   const { weatherData, isLoading: isLoadingWeather } = useWeather(location || undefined);
 
   // Render the appropriate calendar view based on the current view state
-  // Using useMemo to ensure the view only re-renders when necessary
-  const calendarView = useMemo(() => {
-    console.log("Rendering view:", view, "forceRender:", forceRender);
-    
+  const calendarView = (() => {
     switch (view) {
       case "day":
-        return <DayView key={`day-view-${forceRender}`} weatherData={weatherData} />;
+        return <DayView weatherData={weatherData} />;
       case "week":
-        return <WeekView key={`week-view-${forceRender}`} weatherData={weatherData} />;
+        return <WeekView weatherData={weatherData} />;
       case "year":
-        return <YearView key={`year-view-${forceRender}`} weatherData={weatherData} />;
+        return <YearView weatherData={weatherData} />;
       case "month":
       default:
-        return <MonthView key={`month-view-${forceRender}`} weatherData={weatherData} />;
+        return <MonthView weatherData={weatherData} />;
     }
-  }, [view, weatherData, forceRender]);
+  })();
 
   const handleProjectSelect = (projectId: number) => {
     setLocation(`/projects?id=${projectId}`);
@@ -81,9 +72,9 @@ export default function Calendar() {
           ))
         ) : projects.length > 0 ? (
           projects.map((project) => (
-            <ProjectCard 
-              key={project.id} 
-              project={project} 
+            <ProjectCard
+              key={project.id}
+              project={project}
               onSelect={() => handleProjectSelect(project.id)}
             />
           ))
@@ -106,8 +97,8 @@ export default function Calendar() {
         </div>
       )}
       <div className="max-h-[calc(100vh-10rem)] overflow-y-auto pr-2 pb-2">
-        <WeatherRow 
-          forecasts={weatherData} 
+        <WeatherRow
+          forecasts={weatherData}
           isLoading={isLoadingWeather}
           location={location}
           vertical={true} // New prop for vertical layout
@@ -122,19 +113,18 @@ export default function Calendar() {
       <div className="hidden lg:block lg:w-1/5 lg:min-w-[250px] sticky top-6 self-start">
         {renderProjects()}
       </div>
-      
+
       {/* Main Calendar Content */}
       <div className="flex-1">
         <CalendarHeader />
         {calendarView}
-        <ViewDebugger />
       </div>
-      
+
       {/* Right Sidebar - Weather */}
       <div className="hidden lg:block lg:w-1/5 lg:min-w-[250px] sticky top-6 self-start">
         {renderWeather()}
       </div>
-      
+
       {/* Mobile View - Projects and Weather displayed below calendar */}
       <div className="lg:hidden grid grid-cols-1 gap-8 mt-8">
         <div>
@@ -152,9 +142,9 @@ export default function Calendar() {
               ))
             ) : projects.length > 0 ? (
               projects.map((project) => (
-                <ProjectCard 
-                  key={project.id} 
-                  project={project} 
+                <ProjectCard
+                  key={project.id}
+                  project={project}
                   onSelect={() => handleProjectSelect(project.id)}
                 />
               ))
@@ -165,7 +155,7 @@ export default function Calendar() {
             )}
           </div>
         </div>
-        
+
         <div>
           <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
           {!locationRequested && (
@@ -174,8 +164,8 @@ export default function Calendar() {
             </div>
           )}
           <div className="max-h-[70vh] overflow-y-auto pr-2 pb-2">
-            <WeatherRow 
-              forecasts={weatherData} 
+            <WeatherRow
+              forecasts={weatherData}
               isLoading={isLoadingWeather}
               location={location}
             />

@@ -1,6 +1,22 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from "react";
 import { locationService, ValidatedLocation, LocationValidationResult } from "../lib/locationService";
 
+export type AdviceMode = "general" | "local";
+
+const ADVICE_MODE_STORAGE_KEY = "adviceMode";
+
+function loadStoredAdviceMode(): AdviceMode {
+  try {
+    const saved = localStorage.getItem(ADVICE_MODE_STORAGE_KEY);
+    if (saved === "general" || saved === "local") {
+      return saved;
+    }
+  } catch (err) {
+    console.error("Could not read advice mode from localStorage:", err);
+  }
+  return "local";
+}
+
 // Define the shape of our context
 interface LocationContextType {
   location: string | null;
@@ -15,6 +31,8 @@ interface LocationContextType {
   dismissLocationChange: () => void;
   confidence: number;
   source: 'gps' | 'user_input' | 'cached' | 'fallback' | null;
+  adviceMode: AdviceMode;
+  setAdviceMode: (mode: AdviceMode) => void;
 }
 
 // Create the context with a default value
@@ -32,6 +50,8 @@ const LocationContext = createContext<LocationContextType>({
   dismissLocationChange: () => {},
   confidence: 0,
   source: null,
+  adviceMode: "local",
+  setAdviceMode: () => {},
 });
 
 /**
@@ -50,6 +70,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   const [locationChangeDetected, setLocationChangeDetected] = useState(false);
   const [confidence, setConfidence] = useState(0);
   const [source, setSource] = useState<'gps' | 'user_input' | 'cached' | 'fallback' | null>(null);
+  const [adviceMode, setAdviceModeState] = useState<AdviceMode>(loadStoredAdviceMode);
   
   // Add refs to prevent multiple simultaneous lookups
   const isLookingUpRef = useRef(false);
@@ -230,6 +251,15 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     getLocationFromBrowser();
   }, [getLocationFromBrowser]);
 
+  const setAdviceMode = useCallback((mode: AdviceMode) => {
+    setAdviceModeState(mode);
+    try {
+      localStorage.setItem(ADVICE_MODE_STORAGE_KEY, mode);
+    } catch (err) {
+      console.error("Could not save advice mode to localStorage:", err);
+    }
+  }, []);
+
   // Create the context value using memoization to prevent unnecessary re-renders
   const value = React.useMemo(() => ({
     location,
@@ -244,19 +274,23 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     dismissLocationChange,
     confidence,
     source,
+    adviceMode,
+    setAdviceMode,
   }), [
-    location, 
-    coordinates, 
-    isLoading, 
-    error, 
-    requestLocationPermission, 
+    location,
+    coordinates,
+    isLoading,
+    error,
+    requestLocationPermission,
     hasRequestedPermission,
     validatedLocation,
     setLocation,
     locationChangeDetected,
     dismissLocationChange,
     confidence,
-    source
+    source,
+    adviceMode,
+    setAdviceMode,
   ]);
 
   return (

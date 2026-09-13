@@ -20,3 +20,7 @@ vite.config.ts.*
 replit.nix
 *.repomix.xml
 attached_assets/
+
+# Local media artifacts
+videos/
+.DS_Store

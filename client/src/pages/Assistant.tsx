@@ -7,11 +7,21 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { useToast } from "@/hooks/use-toast";
-import { createConversation, getChatCompletion } from "@/lib/openAiApi";
+import { createConversation, sendChatMessage, getTimeZone, ChatResponse, invalidateMutatedQueries } from "@/lib/openAiApi";
+import { useLocation } from "@/contexts/LocationContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
+}
+
+// Only conversation-visible messages: internal system prompts, tool results,
+// and assistant tool-call envelopes are not rendered.
+function isDisplayable(message: Message): boolean {
+  if (message.role === "user") return true;
+  if (message.role === "assistant") return !!message.content;
+  return false;
 }
 
 export default function Assistant() {
@@ -21,10 +31,13 @@ export default function Assistant() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
+  const { location: userLocation, adviceMode } = useLocation();
+  const { user } = useAuth();
+
   // Get conversations
   const { data: conversations = [], isLoading: isLoadingConversations } = useQuery<Conversation[]>({
     queryKey: ["/api/conversations"],
+    enabled: !!user,
   });
   
   // Get active conversation
@@ -41,35 +54,32 @@ export default function Assistant() {
   // Mutation for sending messages
   const sendMessageMutation = useMutation({
     mutationFn: async ({ conversationId, message }: { conversationId: number, message: string }) => {
-      const response = await apiRequest("POST", `/api/conversations/${conversationId}/messages`, { message });
-      return response.json();
+      return sendChatMessage(conversationId, {
+        message,
+        adviceMode,
+        location: userLocation ?? null,
+        timeZone: getTimeZone()
+      });
     },
-    onSuccess: (data) => {
+    onSuccess: (data: ChatResponse) => {
       queryClient.invalidateQueries({ queryKey: ["/api/conversations", activeConversationId] });
       queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      invalidateMutatedQueries(queryClient, data);
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: "Failed to send message. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to send message. Please try again.",
         variant: "destructive"
       });
       console.error("Error sending message:", error);
     }
   });
-  
+
   // Start a new conversation
   const createConversationMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/conversations", {
-        messages: [
-          {
-            role: "assistant",
-            content: "Hello! I'm your agricultural planning assistant. How can I help you today?"
-          }
-        ]
-      });
-      return response.json();
+      return createConversation("Hello! I'm your agricultural planning assistant. How can I help you today?");
     },
     onSuccess: (data) => {
       setActiveConversationId(data.id);
@@ -124,7 +134,7 @@ export default function Assistant() {
   };
   
   // Ensure messages has the correct type (array of Message objects)
-  const messages: Message[] = activeConversation?.messages as Message[] || [];
+  const messages: Message[] = ((activeConversation?.messages as Message[]) || []).filter(isDisplayable);
 
   return (
     <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-14rem)]">
@@ -155,8 +165,8 @@ export default function Assistant() {
           <div className="space-y-2">
             {conversations.map((conversation: Conversation) => {
               // Get first message as title or use timestamp
-              const messages = conversation.messages as Message[];
-              const firstMessage = messages[0]?.content || "";
+              const conversationMessages = (conversation.messages as Message[]).filter(isDisplayable);
+              const firstMessage = conversationMessages[0]?.content || "";
               const preview = firstMessage.length > 25 
                 ? firstMessage.substring(0, 25) + "..." 
                 : firstMessage;
@@ -210,8 +220,6 @@ export default function Assistant() {
           ) : (
             <>
               {messages
-                // Filter out system messages so they don't show in the UI
-                .filter((message: Message) => message.role !== "system")
                 .map((message: Message, index: number) => (
                 <div key={index} className={`flex items-start ${
                   message.role === "user" ? "justify-end" : ""

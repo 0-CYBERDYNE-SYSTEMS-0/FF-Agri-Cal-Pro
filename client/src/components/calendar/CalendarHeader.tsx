@@ -25,16 +25,10 @@ function ViewButton({ label, isActive, onClick }: ViewButtonProps) {
 }
 
 export default function CalendarHeader() {
-  const { view, setView, currentDate, formatCurrentMonthYear, goToPrev, goToNext, goToToday, forceRender, refreshEvents } = useCalendar();
+  const { view, setView, currentDate, formatCurrentMonthYear, goToPrev, goToNext, goToToday, refreshEvents } = useCalendar();
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-
-  const changeView = (newView: "day" | "week" | "month" | "year") => {
-    if (newView !== view) {
-      setTimeout(() => setView(newView), 0);
-    }
-  };
 
   const handleImportICS = () => {
     fileInputRef.current?.click();
@@ -52,7 +46,7 @@ export default function CalendarHeader() {
 
       toast({
         title: "ICS Imported",
-        description: `${result.count} events imported from ${file.name}`,
+        description: result.message || `${result.count} events imported from ${file.name}`,
       });
       refreshEvents();
     } catch (err: any) {
@@ -77,10 +71,10 @@ export default function CalendarHeader() {
         </div>
         <div className="flex items-center space-x-3">
           <div className="flex bg-white rounded-md shadow-sm">
-            <ViewButton key={`day-btn-${forceRender}`} label="Day" isActive={view === "day"} onClick={() => changeView("day")} />
-            <ViewButton key={`week-btn-${forceRender}`} label="Week" isActive={view === "week"} onClick={() => changeView("week")} />
-            <ViewButton key={`month-btn-${forceRender}`} label="Month" isActive={view === "month"} onClick={() => changeView("month")} />
-            <ViewButton key={`year-btn-${forceRender}`} label="Year" isActive={view === "year"} onClick={() => changeView("year")} />
+            <ViewButton label="Day" isActive={view === "day"} onClick={() => setView("day")} />
+            <ViewButton label="Week" isActive={view === "week"} onClick={() => setView("week")} />
+            <ViewButton label="Month" isActive={view === "month"} onClick={() => setView("month")} />
+            <ViewButton label="Year" isActive={view === "year"} onClick={() => setView("year")} />
           </div>
           <Button onClick={handleImportICS} variant="outline" disabled={isImporting} className="flex items-center gap-2">
             <Upload className="h-4 w-4" />

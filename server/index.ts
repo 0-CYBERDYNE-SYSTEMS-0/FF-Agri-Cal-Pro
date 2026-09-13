@@ -1,13 +1,19 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { checkDatabaseConnection, getPool, hasDatabase } from "../db";
 
 const app = express();
+
+// Trust the first proxy so `secure` session cookies work behind TLS-terminating
+// proxies (req.protocol/req.ip reflect X-Forwarded-* headers).
+app.set("trust proxy", 1);
 
 // --- Security Middleware ---
 
@@ -22,32 +28,20 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting: prevent abuse
+// Rate limiting: prevent abuse. Registered BEFORE the API routes so it guards
+// every /api endpoint from the first request.
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 100 : 1000,
+  limit: parsePositiveInt(process.env.RATE_LIMIT_MAX, process.env.NODE_ENV === "production" ? 100 : 1000),
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many requests, please try again later." },
 });
+app.use("/api", apiLimiter);
 
 // Body parsing
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
-
-// Session store (in-memory for dev, swap to connect-pg-simple for production)
-const sessionSecret = process.env.SESSION_SECRET || "dev-secret-change-in-production-" + Date.now();
-app.use(session({
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: "lax",
-  },
-}));
 
 // Request logging (no sensitive data)
 app.use((req, res, next) => {
@@ -69,10 +63,55 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const server = await registerRoutes(app);
+  // Persistent PostgreSQL storage is required for normal operation. In-memory
+  // storage (MEM_STORAGE=1) is reserved for explicit tests or demonstrations.
+  if (!hasDatabase()) {
+    if (process.env.MEM_STORAGE !== "1") {
+      console.error(
+        "FATAL: DATABASE_URL is not set. Persistent storage is required for normal startup.\n" +
+        "Set DATABASE_URL to a PostgreSQL connection string, or run with MEM_STORAGE=1 explicitly for a demo."
+      );
+      process.exit(1);
+    }
+    log("MEM_STORAGE=1: using in-memory storage (data will not persist)");
+  } else {
+    try {
+      await checkDatabaseConnection();
+      log("Connected to PostgreSQL");
+    } catch (err) {
+      console.error(
+        "FATAL: cannot reach the PostgreSQL database at DATABASE_URL. " +
+        "Persistent storage is required for normal startup.",
+        err instanceof Error ? err.message : err
+      );
+      process.exit(1);
+    }
+  }
 
-  // Apply rate limiting to all API routes
-  app.use("/api", apiLimiter);
+  // Persistent session store sharing the application pg pool; the default
+  // in-memory MemoryStore is only used for MEM_STORAGE demos.
+  const sessionStore = hasDatabase()
+    ? new (connectPgSimple(session))({
+        pool: getPool(),
+        createTableIfMissing: true,
+      })
+    : undefined;
+
+  const sessionSecret = process.env.SESSION_SECRET || "dev-secret-change-in-production-" + Date.now();
+  app.use(session({
+    store: sessionStore,
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: "lax",
+    },
+  }));
+
+  const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -97,3 +136,8 @@ app.use((req, res, next) => {
     log(`serving on port ${port} (${app.get("env")} mode)`);
   });
 })();
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}

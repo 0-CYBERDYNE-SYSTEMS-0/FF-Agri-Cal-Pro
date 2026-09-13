@@ -11,7 +11,7 @@
 </h3>
 
 <p align="center">
-<img src="https://img.shields.io/badge/STATUS-PRODUCTION%20READY-00ff00?style=flat-square&labelColor=000000">
+<img src="https://img.shields.io/badge/STATUS-IN%20DEVELOPMENT-ffaa00?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/AI-POWERED-ff69b4?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/WEATHER-INTEGRATED-00bfff?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/BUILT%20WITH-TYPESCRIPT-3178c6?style=flat-square&labelColor=000000">
@@ -25,11 +25,11 @@
 ```typescript
 interface FFAgriCalPro {
   type: "Full-Stack Agricultural Calendar Application"
-  features: ["AI Assistant", "Weather Integration", "Project Management", "Real-time Updates"]
+  features: ["AI Assistant", "Weather Integration", "Project Management"]
   stack: {
     frontend: ["React 18", "TypeScript", "TanStack Query", "Tailwind CSS", "shadcn/ui"]
-    backend: ["Express.js", "PostgreSQL", "Drizzle ORM", "OpenAI API", "WebSocket"]
-    deployment: ["Docker Ready", "Production Optimized"]
+    backend: ["Express.js", "PostgreSQL", "Drizzle ORM (node-postgres)", "OpenAI API"]
+    deployment: ["Production Optimized"]
   }
 }
 
@@ -66,13 +66,12 @@ OpenAI Integration
 
 ###  Weather Intelligence
 
- 100%
-Real-time Data
+ Live Provider Data
 
-- Location-based forecasts
+- Location-based forecasts (Open-Meteo, no API key required)
 - Agricultural alerts
 - Event weather checking
-- 5-minute cache optimization
+- 10-minute cache
 
 </td>
 </tr>
@@ -89,10 +88,10 @@ npm install
 
 # Environment setup
 cp .env.example .env
-# Add your API keys:
-# - DATABASE_URL (PostgreSQL)
+# Add your configuration:
+# - DATABASE_URL (PostgreSQL, required for normal startup)
 # - OPENAI_API_KEY
-# - OPENWEATHER_API_KEY
+# - CHAT_MODEL (optional override of the single assistant model)
 # Database initialization
 npm run db:push
 
@@ -139,38 +138,44 @@ FF-Agri-Cal-Pro/
 | **Styling** | Tailwind CSS + shadcn/ui | Beautiful, consistent design |
 | **Backend** | Express.js + TypeScript | RESTful API server |
 | **Database** | PostgreSQL + Drizzle ORM | Relational data storage |
-| **AI** | OpenAI API | Intelligent assistance |
-| **Weather** | OpenWeather API | Real-time weather data |
-| **Real-time** | WebSocket | Live updates |
+| **AI** | OpenAI API | Intelligent assistance (single configurable model) |
+| **Weather** | Open-Meteo | Forecasts (no API key required) |
 | **Build** | Vite + ESBuild | Lightning-fast builds |
 
 </div>
 
 ## `> API_ENDPOINTS`
 ```typescript
-// Core API Routes
-GET    /api/user                 // User profile
-POST   /api/auth/login           // Authentication
+// Auth (session cookie)
+POST   /api/auth/register        // Create account
+POST   /api/auth/login           // Authenticate
 POST   /api/auth/logout          // Session end
+GET    /api/auth/status          // Session check
 
-// Calendar Management
-GET    /api/events               // List events
+// Calendar Management (all require authentication; owned records only)
+GET    /api/events               // List events (all, by range, or by project)
 POST   /api/events               // Create event
-PUT    /api/events/:id           // Update event
+GET    /api/events/:id           // Read event
+PUT    /api/events/:id           // Update event (partial fields)
 DELETE /api/events/:id           // Delete event
+GET    /api/events/ics           // Export events as ICS
+POST   /api/events/import-ics    // Import ICS (validated, transactional)
+GET    /api/events/weather-dependent // Weather-dependent events
 
 // Project Management
 GET    /api/projects             // List projects
 POST   /api/projects             // Create project
+GET    /api/projects/:id         // Read project
 PUT    /api/projects/:id         // Update project
+DELETE /api/projects/:id         // Delete project
 
 // AI Assistant
-POST   /api/chat                 // AI conversation
+POST   /api/conversations/:id/messages // Send a chat message
 GET    /api/conversations        // Chat history
 
-// Weather Services
-GET    /api/weather/current      // Current weather
-GET    /api/weather/forecast     // 5-day forecast
+// Weather Services (Open-Meteo)
+GET    /api/weather              // Current conditions + 7-day forecast
+```
 
 ## `> DATABASE_SCHEMA`
 ```sql
@@ -206,7 +211,9 @@ DATABASE_URL=postgresql://user:pass@host:5432/dbname
 
 # External APIs
 OPENAI_API_KEY=sk-...
-OPENWEATHER_API_KEY=...
+
+# Assistant model (optional; no automatic fallback)
+CHAT_MODEL=gpt-4.1-mini
 
 # Session
 SESSION_SECRET=your-secret-key

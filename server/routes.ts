@@ -3,21 +3,35 @@ import { createServer, type Server } from "http";
 import * as bcrypt from "bcrypt";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast } from "@shared/schema";
+import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConversationSchema, insertUserFileSchema, insertUserDocumentSchema, WeatherForecast, Event, InsertEvent } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
-import { fetchComprehensiveWeather, getAgricultureRecommendations, getCurrentWeather } from "./openWeatherApi";
-import { eq } from "drizzle-orm";
-import { events, Event, InsertEvent } from "@shared/schema";
+import { fetchComprehensiveWeather, getAgricultureRecommendations, geocodeLocation, formatWeatherData, WeatherResponse } from "./openWeatherApi";
+import { expandRecurringEvents, RecurringPattern } from "@shared/recurrence";
+import { parseICS, planImport, serializeICS } from "@shared/ics";
+import { CHAT_MODEL, TOOL_LOOP_LIMIT, createChatClient } from "./modelConfig";
+import {
+  createEventToolSchema,
+  updateEventToolSchema,
+  deleteEventToolSchema,
+  searchEventsToolSchema,
+  getOrCreateProjectToolSchema,
+  readUserFileToolSchema,
+  listUserFilesToolSchema,
+  createUserDocumentToolSchema,
+  listUserDocumentsToolSchema,
+  updateEventRouteSchema,
+  updateProjectRouteSchema,
+  updateUserFileRouteSchema,
+  updateUserDocumentRouteSchema,
+} from "./toolSchemas";
 
-// Helper function to determine the current season based on date
-function getSeasonForDate(date: Date): string {
+// Helper function to determine the current season based on date and hemisphere
+function getSeasonForDate(date: Date, northernHemisphere: boolean): string {
   const month = date.getMonth();
   const day = date.getDate();
-  const northernHemisphere = true; // Default to northern hemisphere
 
-  // Adjust seasons based on hemisphere
   if (northernHemisphere) {
     if ((month === 11 && day >= 21) || month < 2 || (month === 2 && day <= 20)) {
       return "Winter";
@@ -42,24 +56,36 @@ function getSeasonForDate(date: Date): string {
   }
 }
 
-// Define the formatted weather data type
-interface FormattedWeatherData {
-  location: string;
-  current: WeatherForecast;
-  forecast: WeatherForecast[];
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-// Helper function to format weather data
-function formatWeatherData(weatherData: { locationName: string, forecasts: WeatherForecast[] }): FormattedWeatherData {
-  const [current, ...forecast] = weatherData.forecasts;
-  if (!current) {
-    throw new Error('No weather data available');
-  }
-  return {
-    location: weatherData.locationName,
-    current: { ...current, isCurrent: true },
-    forecast: forecast.map((day: WeatherForecast) => ({ ...day, isCurrent: false }))
-  };
+function formatFarmDateTime(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+interface MutationResult {
+  type: string;
+  id: number;
+  ok: boolean;
+}
+
+function describeMutations(mutations: MutationResult[]): string {
+  return mutations.map(m => `${m.type} #${m.id}${m.ok ? "" : " (failed)"}`).join(", ");
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -75,13 +101,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.status(500).json({ message: err.message || "Internal Server Error" });
   };
 
-  // Auth middleware
+  // Auth middleware: every private route requires a session user
   const requireAuth = (req: Request, res: Response, next: NextFunction) => {
     const userId = (req.session as any).userId;
     if (!userId) return res.status(401).json({ message: "Authentication required" });
     next();
   };
-  const getUserId = (req: Request): number => (req.session as any).userId || 1;
+
+  // Session user id; only valid after requireAuth (no fallback user)
+  const getUserId = (req: Request): number => (req.session as any).userId as number;
+
+  // Loads an owned record or responds 404 (existence is not leaked across users)
+  const ownedOr404 = async <T extends { userId: number }>(
+    req: Request, res: Response, load: () => Promise<T | undefined>
+  ): Promise<T | null> => {
+    const record = await load();
+    if (!record || record.userId !== getUserId(req)) {
+      res.status(404).json({ message: "Not found" });
+      return null;
+    }
+    return record;
+  };
+
+  // Validates a projectId argument against the user's own projects
+  const ownedProjectOrError = async (userId: number, projectId: number): Promise<string | null> => {
+    const project = await storage.getProject(projectId);
+    if (!project || project.userId !== userId) {
+      return `Project ${projectId} was not found`;
+    }
+    return null;
+  };
 
   // User routes
   app.post("/api/auth/register", async (req: Request, res: Response) => {
@@ -142,15 +191,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  app.get("/api/auth/status", (req: Request, res: Response) => {
-    const userId = (req.session as any).userId;
-    return res.status(200).json({ authenticated: !!userId, userId: userId || null });
+  app.get("/api/auth/status", async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      if (!userId) {
+        return res.status(200).json({ authenticated: false, user: null });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(200).json({ authenticated: false, user: null });
+      }
+      const { password, ...userResponse } = user;
+      return res.status(200).json({ authenticated: true, user: userResponse });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
   });
 
-  app.get("/api/users/me", async (req: Request, res: Response) => {
+  app.get("/api/users/me", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = getUserId(req);
-      const user = await storage.getUser(userId);
+      const user = await storage.getUser(getUserId(req));
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -168,7 +228,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Project routes
   app.get("/api/projects", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
       const projects = await storage.getProjectsByUser(userId);
       return res.status(200).json(projects);
@@ -177,14 +236,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/projects/:id", async (req: Request, res: Response) => {
+  app.get("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const project = await storage.getProject(id);
-
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
+      const project = await ownedOr404(req, res, () => storage.getProject(id));
+      if (!project) return;
 
       return res.status(200).json(project);
     } catch (err) {
@@ -194,7 +250,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/projects", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
       const projectData = insertProjectSchema.parse({ ...req.body, userId });
       const project = await storage.createProject(projectData);
@@ -207,13 +262,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const project = await storage.getProject(id);
+      const project = await ownedOr404(req, res, () => storage.getProject(id));
+      if (!project) return;
 
-      if (!project) {
+      // Strict schema: rejects attempts to change userId/id through the body
+      const updates = updateProjectRouteSchema.parse(req.body);
+      const updatedProject = await storage.updateProject(id, updates);
+
+      if (!updatedProject) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      const updatedProject = await storage.updateProject(id, req.body);
       return res.status(200).json(updatedProject);
     } catch (err) {
       return handleApiError(err, res);
@@ -223,11 +282,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/projects/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const project = await storage.getProject(id);
-
-      if (!project) {
-        return res.status(404).json({ message: "Project not found" });
-      }
+      const project = await ownedOr404(req, res, () => storage.getProject(id));
+      if (!project) return;
 
       await storage.deleteProject(id);
       return res.status(204).end();
@@ -236,10 +292,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Event routes
+  // Event routes — literal paths are registered BEFORE "/api/events/:id"
+  // so /api/events/ics and /api/events/weather-dependent reach their handlers.
+
+  // Get calendar events as ICS file
+  app.get("/api/events/ics", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const userEvents = await storage.getEventsByUser(userId);
+
+      const icsContent = serializeICS(userEvents.map(event => ({
+        id: event.id,
+        uid: event.uid,
+        title: event.title,
+        description: event.description,
+        location: event.location,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        allDay: event.allDay,
+        checkWeather: event.checkWeather,
+        projectId: event.projectId,
+        isRecurring: event.isRecurring,
+        recurringPattern: (event.recurringPattern ?? null) as RecurringPattern | null,
+      })));
+
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=farm-calendar.ics');
+
+      return res.status(200).send(icsContent);
+    } catch (err) {
+      console.error("Error generating ICS file:", err);
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/events/weather-dependent", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const location = req.query.location as string;
+      if (!location) {
+        return res.status(400).json({ message: "Location is required" });
+      }
+
+      const weatherData = await fetchComprehensiveWeather(location);
+      if (!weatherData) {
+        return res.status(404).json({
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')."
+        });
+      }
+
+      const userId = getUserId(req);
+      const events = await storage.getEventsByUser(userId);
+      const weatherDependentEvents = events.filter(event => event.checkWeather);
+
+      const formattedData = formatWeatherData(weatherData);
+      return res.status(200).json({
+        weather: formattedData,
+        events: weatherDependentEvents
+      });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // ICS Import — validate the full file, then write the batch in a transaction.
+  // Duplicate policy: events whose UID already exists for the user are skipped
+  // and reported (never silently duplicated, never overwritten).
+  app.post("/api/events/import-ics", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { icsContent } = z.object({
+        icsContent: z.string().min(1, "ICS content is required"),
+      }).parse(req.body);
+
+      const userId = getUserId(req);
+      const { events: parsed, errors } = parseICS(icsContent);
+
+      if (errors.length > 0) {
+        return res.status(400).json({
+          message: `Import rejected: ${errors.length} event(s) could not be parsed. No events were written.`,
+          errors,
+        });
+      }
+
+      if (parsed.length === 0) {
+        return res.status(400).json({ message: "No valid events found in ICS content" });
+      }
+
+      const existing = await storage.getEventsByUser(userId);
+      const existingUids = existing
+        .map(event => event.uid)
+        .filter((uid): uid is string => !!uid);
+      const { toCreate, duplicates } = planImport(parsed, existingUids);
+
+      const eventsToInsert: InsertEvent[] = toCreate.map(eventData => ({
+        userId,
+        title: eventData.title,
+        description: eventData.description,
+        startDate: eventData.startDate,
+        endDate: eventData.endDate,
+        location: eventData.location,
+        projectId: null,
+        allDay: eventData.allDay,
+        checkWeather: eventData.checkWeather,
+        isRecurring: !!eventData.recurringPattern,
+        recurringPattern: eventData.recurringPattern,
+        uid: eventData.uid,
+      }));
+
+      const created = await storage.createEvents(eventsToInsert);
+
+      return res.status(201).json({
+        message: `Imported ${created.length} event(s), skipped ${duplicates.length} duplicate(s)`,
+        count: created.length,
+        skipped: duplicates.length,
+        events: created,
+      });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
   app.get("/api/events", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
 
       // If startDate and endDate are provided, filter events by date range
@@ -255,11 +428,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(200).json(events);
       }
 
-      // If projectId is provided, filter events by project
+      // If projectId is provided, filter events by project (owned projects only)
       if (req.query.projectId) {
         const projectId = parseInt(req.query.projectId as string);
         const events = await storage.getEventsByProject(projectId);
-        return res.status(200).json(events);
+        return res.status(200).json(events.filter(event => event.userId === userId));
       }
 
       // Otherwise, get all events for the user
@@ -270,14 +443,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/events/:id", async (req: Request, res: Response) => {
+  app.get("/api/events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const event = await storage.getEvent(id);
-
-      if (!event) {
-        return res.status(404).json({ message: "Event not found" });
-      }
+      const event = await ownedOr404(req, res, () => storage.getEvent(id));
+      if (!event) return;
 
       return res.status(200).json(event);
     } catch (err) {
@@ -287,18 +457,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/events", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
 
       // Handle both string and Date objects for dates
       const { startDate, endDate, ...restBody } = req.body;
 
-      // Convert dates if they're strings
+      // Convert dates if they're strings; userId comes from the session last so
+      // a client body cannot assign the event to another user
       const parsedData = {
         ...restBody,
-        userId,
         startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
-        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
+        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate,
+        userId,
       };
 
       // Now parse with the schema
@@ -313,13 +483,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const event = await storage.getEvent(id);
+      const event = await ownedOr404(req, res, () => storage.getEvent(id));
+      if (!event) return;
 
-      if (!event) {
+      // Strict partial schema: only supported fields, no ownership or ID changes
+      const updates = updateEventRouteSchema.parse(req.body);
+
+      if (updates.projectId !== undefined && updates.projectId !== null) {
+        const projectError = await ownedProjectOrError(getUserId(req), updates.projectId);
+        if (projectError) {
+          return res.status(400).json({ message: projectError });
+        }
+      }
+
+      const updatedEvent = await storage.updateEvent(id, updates);
+
+      if (!updatedEvent) {
         return res.status(404).json({ message: "Event not found" });
       }
 
-      const updatedEvent = await storage.updateEvent(id, req.body);
       return res.status(200).json(updatedEvent);
     } catch (err) {
       return handleApiError(err, res);
@@ -329,11 +511,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const event = await storage.getEvent(id);
-
-      if (!event) {
-        return res.status(404).json({ message: "Event not found" });
-      }
+      const event = await ownedOr404(req, res, () => storage.getEvent(id));
+      if (!event) return;
 
       await storage.deleteEvent(id);
       return res.status(204).end();
@@ -343,93 +522,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Weather routes
+  const weatherQuerySchema = z.object({
+    location: z.string().trim().min(1).optional(),
+    lat: z.coerce.number().min(-90).max(90).optional(),
+    lon: z.coerce.number().min(-180).max(180).optional(),
+  });
+
   app.get("/api/weather", async (req: Request, res: Response) => {
     try {
-      const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
+      const query = weatherQuerySchema.parse(req.query);
+      const hasCoords = query.lat !== undefined && query.lon !== undefined;
+      const hasLocation = !!query.location;
+
+      if (hasCoords === hasLocation) {
+        return res.status(400).json({ message: "Provide either a location name or lat and lon coordinates" });
       }
 
-      const weatherData = await fetchComprehensiveWeather(location);
+      const weatherData = hasCoords
+        ? await fetchComprehensiveWeather({ lat: query.lat!, lon: query.lon! })
+        : await fetchComprehensiveWeather(query.location!);
+
       if (!weatherData) {
-        return res.status(404).json({ 
-          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
+        return res.status(404).json({
+          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')."
         });
       }
 
       const formattedData = formatWeatherData(weatherData);
       return res.status(200).json(formattedData);
-    } catch (err) {
-      return handleApiError(err, res);
-    }
-  });
-
-  // Update the agriculture recommendations endpoint
-  app.get("/api/weather/agriculture", async (req: Request, res: Response) => {
-    try {
-      const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
-      }
-
-      const weatherData = await fetchComprehensiveWeather(location);
-      if (!weatherData) {
-        return res.status(404).json({ 
-          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
-        });
-      }
-
-      const recommendations = getAgricultureRecommendations(weatherData);
-      return res.status(200).json({ recommendations });
-    } catch (err) {
-      return handleApiError(err, res);
-    }
-  });
-
-  // Real-time weather data API for the AI assistant
-  app.get("/api/weather-data", async (req: Request, res: Response) => {
-    try {
-      // Check if we're doing reverse geocoding from coordinates
-      if (req.query.lat && req.query.lon) {
-        const lat = parseFloat(req.query.lat as string);
-        const lon = parseFloat(req.query.lon as string);
-
-        if (isNaN(lat) || isNaN(lon)) {
-          return res.status(400).json({ message: "Invalid coordinates" });
-        }
-
-        try {
-          // Get weather data which includes location name
-          const weatherData = await getCurrentWeather(lat, lon);
-
-          if (!weatherData) {
-            return res.status(404).json({ message: "Could not retrieve location data" });
-          }
-
-          return res.status(200).json({ 
-            location: weatherData.name + (weatherData.sys?.country ? `, ${weatherData.sys.country}` : ""),
-            weather: weatherData 
-          });
-        } catch (err) {
-          console.error("Error in reverse geocoding:", err);
-          return res.status(500).json({ message: "Error retrieving location from coordinates" });
-        }
-      }
-
-      // Standard weather data request
-      const location = (req.query.location as string);
-
-      if (!location) {
-        return res.status(400).json({ message: "Location parameter is required" });
-      }
-
-      const weatherData = await fetchComprehensiveWeather(location);
-
-      if (!weatherData) {
-        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
-      }
-
-      return res.status(200).json(weatherData);
     } catch (err) {
       return handleApiError(err, res);
     }
@@ -452,7 +572,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Assistant/Conversation routes
   app.get("/api/conversations", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
       const conversations = await storage.getConversationsByUser(userId);
       return res.status(200).json(conversations);
@@ -461,14 +580,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/conversations/:id", async (req: Request, res: Response) => {
+  app.get("/api/conversations/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const conversation = await storage.getConversation(id);
-
-      if (!conversation) {
-        return res.status(404).json({ message: "Conversation not found" });
-      }
+      const conversation = await ownedOr404(req, res, () => storage.getConversation(id));
+      if (!conversation) return;
 
       return res.status(200).json(conversation);
     } catch (err) {
@@ -478,65 +594,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/conversations", requireAuth, async (req: Request, res: Response) => {
     try {
-      // For demo purposes, we'll use user 1
       const userId = getUserId(req);
 
-      // If no messages are provided, add a weather-aware agricultural greeting
       let messages = req.body.messages || [];
 
-      // Define message interface
-      interface ConversationMessage {
-        role: string;
-        content: string;
-        tool_calls?: any[];
-        tool_call_id?: string;
-      }
-
-      if (messages.length === 0 || (messages.length === 1 && messages[0].role === "system")) {
-        // Get default location
-        const userLocation = "New York, USA"; // Default location - in real app would be user's actual location
-
-        // Get weather data
-        const weatherData = await fetchComprehensiveWeather(userLocation);
-
-        // Determine current season
-        const now = new Date();
-        const currentSeason = getSeasonForDate(now);
-
-        // Generate appropriate seasonal greeting
-        let seasonalActivities = "";
-
-        switch(currentSeason) {
-          case "Spring":
-            seasonalActivities = "soil preparation, early crop planting, and equipment maintenance";
-            break;
-          case "Summer":
-            seasonalActivities = "irrigation management, pest control, and vegetable harvesting";
-            break;
-          case "Fall":
-            seasonalActivities = "harvest planning, soil testing, and winter preparation";
-            break;
-          case "Winter":
-            seasonalActivities = "crop planning, equipment repairs, and seed ordering";
-            break;
-        }
-
-        // Create assistant greeting
-        const weatherInfo = weatherData && weatherData.forecasts.length > 0 ? 
-          `The current weather in ${userLocation} is ${weatherData.forecasts[0].temperature}°F with ${weatherData.forecasts[0].weatherDescription}. ` : 
-          "";
-
-        const greeting = `Hello! I'm your Farm Friend agricultural assistant. ${weatherInfo}We're currently in ${currentSeason}, which is typically the time for ${seasonalActivities} in your region.
-
-How can I help with your agricultural planning today?`;
-
-        // Add assistant message if not already present
-        if (!messages.some((msg: ConversationMessage) => msg.role === "assistant")) {
-          messages.push({
-            role: "assistant",
-            content: greeting
-          });
-        }
+      if (messages.length === 0) {
+        messages.push({
+          role: "assistant",
+          content: "Hello! I'm your Farm Friend agricultural assistant. How can I help with your agricultural planning today?"
+        });
       }
 
       const conversationData = insertConversationSchema.parse({ messages, userId });
@@ -547,109 +613,424 @@ How can I help with your agricultural planning today?`;
     }
   });
 
+  const chatMessageSchema = z.object({
+    message: z.string().min(1),
+    adviceMode: z.enum(["general", "local"]),
+    location: z.string().trim().min(1).max(200).nullable().optional(),
+    timeZone: z.string().trim().min(1),
+  });
+
+  // Executes a single tool call, preserving its call ID for the tool result
+  // message. Every write validates ownership and returns the saved ID or an
+  // explicit not-found/failure result — a failed write never reports success.
+  const executeToolCall = async (
+    toolCall: { id: string; function: { name: string; arguments: string } },
+    userId: number
+  ): Promise<{ content: string; mutation?: MutationResult }> => {
+    let rawArgs: any = {};
+    try {
+      rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+    } catch {
+      return { content: JSON.stringify({ success: false, error: "Tool arguments were not valid JSON" }) };
+    }
+
+    const failure = (error: string): { content: string; mutation?: MutationResult } => ({
+      content: JSON.stringify({ success: false, error })
+    });
+
+    switch (toolCall.function.name) {
+      case "search_web": {
+        const searchResults = await searchWeb({ query: String(rawArgs.query ?? "") });
+        return { content: JSON.stringify({ success: true, results: searchResults }) };
+      }
+
+      case "get_weather": {
+        const weatherData = await fetchComprehensiveWeather(String(rawArgs.location ?? ""));
+        if (!weatherData) {
+          return failure("Weather data was unavailable for that location");
+        }
+        const recommendations = getAgricultureRecommendations(weatherData);
+        return { content: JSON.stringify({ success: true, weather: formatWeatherData(weatherData), recommendations }) };
+      }
+
+      case "create_calendar_event": {
+        const args = createEventToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid event arguments: ${fromZodError(args.error).message}`);
+        }
+        if (args.data.endDate.getTime() <= args.data.startDate.getTime()) {
+          return failure("The event end must be after the start");
+        }
+        if (args.data.projectId !== undefined) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+        }
+        const newEvent = await storage.createEvent({
+          userId,
+          title: args.data.title,
+          description: args.data.description ?? null,
+          startDate: args.data.startDate,
+          endDate: args.data.endDate,
+          location: args.data.location ?? null,
+          projectId: args.data.projectId ?? null,
+          allDay: false,
+          checkWeather: args.data.checkWeather ?? true,
+          isRecurring: false,
+          recurringPattern: null,
+        });
+        return {
+          content: JSON.stringify({ success: true, eventId: newEvent.id, event: newEvent }),
+          mutation: { type: "create_event", id: newEvent.id, ok: true },
+        };
+      }
+
+      case "update_calendar_event": {
+        const args = updateEventToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid update arguments: ${fromZodError(args.error).message}`);
+        }
+        const existing = await storage.getEvent(args.data.eventId);
+        if (!existing || existing.userId !== userId) {
+          return failure(`Event ${args.data.eventId} was not found`);
+        }
+        const { eventId, ...fields } = args.data;
+        const updates: Partial<Event> = {};
+        if (fields.title !== undefined) updates.title = fields.title;
+        if (fields.description !== undefined) updates.description = fields.description ?? null;
+        if (fields.startDate !== undefined) updates.startDate = fields.startDate;
+        if (fields.endDate !== undefined) updates.endDate = fields.endDate;
+        if (fields.allDay !== undefined) updates.allDay = fields.allDay;
+        if (fields.location !== undefined) updates.location = fields.location ?? null;
+        if (fields.checkWeather !== undefined) updates.checkWeather = fields.checkWeather;
+        if (fields.isRecurring !== undefined) updates.isRecurring = fields.isRecurring;
+        if (fields.recurringPattern !== undefined) {
+          updates.recurringPattern = fields.recurringPattern
+            ? { ...fields.recurringPattern, endDate: fields.recurringPattern.endDate?.toISOString() ?? null }
+            : null;
+        }
+        if (fields.projectId !== undefined) {
+          if (fields.projectId !== null) {
+            const projectError = await ownedProjectOrError(userId, fields.projectId);
+            if (projectError) return failure(projectError);
+          }
+          updates.projectId = fields.projectId ?? null;
+        }
+        const updated = await storage.updateEvent(eventId, updates);
+        if (!updated) {
+          return failure(`Event ${eventId} was not found`);
+        }
+        return {
+          content: JSON.stringify({ success: true, eventId: updated.id, event: updated }),
+          mutation: { type: "update_event", id: updated.id, ok: true },
+        };
+      }
+
+      case "delete_calendar_event": {
+        const args = deleteEventToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid delete arguments: ${fromZodError(args.error).message}`);
+        }
+        const existing = await storage.getEvent(args.data.eventId);
+        if (!existing || existing.userId !== userId) {
+          return failure(`Event ${args.data.eventId} was not found`);
+        }
+        const deleted = await storage.deleteEvent(args.data.eventId);
+        if (!deleted) {
+          return failure(`Event ${args.data.eventId} could not be deleted`);
+        }
+        return {
+          content: JSON.stringify({ success: true, eventId: args.data.eventId }),
+          mutation: { type: "delete_event", id: args.data.eventId, ok: true },
+        };
+      }
+
+      case "search_calendar_events": {
+        const args = searchEventsToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid search arguments: ${fromZodError(args.error).message}`);
+        }
+        let results: Event[];
+        if (args.data.startDate && args.data.endDate) {
+          results = await storage.getEventsByDateRange(userId, args.data.startDate, args.data.endDate);
+        } else if (args.data.projectId !== undefined) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+          results = (await storage.getEventsByProject(args.data.projectId)).filter(event => event.userId === userId);
+        } else {
+          results = await storage.getEventsByUser(userId);
+        }
+        if (args.data.keyword) {
+          const keyword = args.data.keyword.toLowerCase();
+          results = results.filter(event =>
+            (event.title && event.title.toLowerCase().includes(keyword)) ||
+            (event.description && event.description.toLowerCase().includes(keyword))
+          );
+        }
+        return { content: JSON.stringify({ success: true, events: results }) };
+      }
+
+      case "get_or_create_project": {
+        const args = getOrCreateProjectToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid project arguments: ${fromZodError(args.error).message}`);
+        }
+        const userProjects = await storage.getProjectsByUser(userId);
+        const existing = userProjects.find(project => project.name.toLowerCase() === args.data.name.toLowerCase());
+        if (existing) {
+          return { content: JSON.stringify({ success: true, projectId: existing.id, project: existing, isNew: false }) };
+        }
+        const newProject = await storage.createProject({
+          userId,
+          name: args.data.name,
+          description: args.data.description ?? "",
+          status: "active",
+          startDate: new Date(),
+          endDate: null,
+        });
+        return {
+          content: JSON.stringify({ success: true, projectId: newProject.id, project: newProject, isNew: true }),
+          mutation: { type: "create_project", id: newProject.id, ok: true },
+        };
+      }
+
+      case "read_user_file": {
+        const args = readUserFileToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid file arguments: ${fromZodError(args.error).message}`);
+        }
+        let file;
+        if (args.data.fileId !== undefined) {
+          const found = await storage.getUserFile(args.data.fileId);
+          file = found && found.userId === userId ? found : undefined;
+        } else if (args.data.filename) {
+          const userFiles = await storage.getUserFilesByUser(userId);
+          file = userFiles.find(f => f.originalName === args.data!.filename || f.filename === args.data!.filename);
+        }
+        if (!file) {
+          return failure("File not found");
+        }
+        return {
+          content: JSON.stringify({
+            success: true,
+            file: {
+              id: file.id,
+              filename: file.originalName,
+              fileType: file.fileType,
+              size: file.fileSize,
+              uploadDate: file.uploadDate,
+              description: file.description,
+              metadata: file.metadata
+            },
+            content: `File content would be read from: ${file.filePath}`
+          })
+        };
+      }
+
+      case "list_user_files": {
+        const args = listUserFilesToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid list arguments: ${fromZodError(args.error).message}`);
+        }
+        let files;
+        if (args.data.fileType) {
+          files = await storage.getUserFilesByType(userId, args.data.fileType);
+        } else if (args.data.projectId !== undefined) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+          files = (await storage.getUserFilesByProject(args.data.projectId)).filter(file => file.userId === userId);
+        } else {
+          files = await storage.getUserFilesByUser(userId);
+        }
+        return {
+          content: JSON.stringify({
+            success: true,
+            files: files.map(file => ({
+              id: file.id,
+              filename: file.originalName,
+              fileType: file.fileType,
+              size: file.fileSize,
+              uploadDate: file.uploadDate,
+              description: file.description,
+              projectId: file.projectId
+            }))
+          })
+        };
+      }
+
+      case "create_user_document": {
+        const args = createUserDocumentToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid document arguments: ${fromZodError(args.error).message}`);
+        }
+        if (args.data.projectId !== undefined) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+        }
+        const newDocument = await storage.createUserDocument({
+          userId,
+          title: args.data.title,
+          content: args.data.content,
+          documentType: args.data.documentType ?? "note",
+          projectId: args.data.projectId ?? null,
+          tags: args.data.tags ?? null,
+          isPublic: false,
+        });
+        return {
+          content: JSON.stringify({
+            success: true,
+            document: {
+              id: newDocument.id,
+              title: newDocument.title,
+              documentType: newDocument.documentType,
+              createdAt: newDocument.createdAt,
+              projectId: newDocument.projectId
+            }
+          }),
+          mutation: { type: "create_document", id: newDocument.id, ok: true },
+        };
+      }
+
+      case "list_user_documents": {
+        const args = listUserDocumentsToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid list arguments: ${fromZodError(args.error).message}`);
+        }
+        let documents;
+        if (args.data.documentType) {
+          documents = await storage.getUserDocumentsByType(userId, args.data.documentType);
+        } else if (args.data.projectId !== undefined) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+          documents = (await storage.getUserDocumentsByProject(args.data.projectId)).filter(doc => doc.userId === userId);
+        } else {
+          documents = await storage.getUserDocumentsByUser(userId);
+        }
+        return {
+          content: JSON.stringify({
+            success: true,
+            documents: documents.map(doc => ({
+              id: doc.id,
+              title: doc.title,
+              documentType: doc.documentType,
+              createdAt: doc.createdAt,
+              updatedAt: doc.updatedAt,
+              projectId: doc.projectId,
+              tags: doc.tags
+            }))
+          })
+        };
+      }
+
+      default:
+        return failure(`Unknown tool "${toolCall.function.name}"`);
+    }
+  };
+
   app.post("/api/conversations/:id/messages", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const conversation = await storage.getConversation(id);
+      const conversation = await ownedOr404(req, res, () => storage.getConversation(id));
+      if (!conversation) return;
 
-      if (!conversation) {
-        return res.status(404).json({ message: "Conversation not found" });
-      }
-
-      const { message } = z.object({
-        message: z.string()
-      }).parse(req.body);
-
-      // Add user message
-      const updatedMessages = [
-        ...(Array.isArray(conversation.messages) ? conversation.messages : []),
-        { role: "user", content: message }
-      ];
-
-      // Get AI response from OpenAI API
-      const OpenAI = await import("openai");
-      const openai = new OpenAI.default({
-        apiKey: process.env.OPENAI_API_KEY
-      });
-
-      // Get location data for context from request headers or use default
-      const userAgent = req.headers['user-agent'] || '';
-      let userLocation = 'Unknown Location';
-
-      // Try to get location from query or cookies, or use default
-      if (req.query.location) {
-        userLocation = req.query.location as string;
-      } else if (req.cookies && req.cookies.userLocation) {
-        userLocation = req.cookies.userLocation;
-      } else {
-        // Default location if not provided
-        userLocation = 'New York, USA';
-      }
-
-      // Get real weather data and context directly instead of going through the API
-      // This avoids port issues and is more efficient
-
-      // Get weather data
-      const weatherData = await fetchComprehensiveWeather(userLocation);
-
-      // Get user's calendar events (using default user ID 1)
+      const body = chatMessageSchema.parse(req.body);
+      const { message, adviceMode } = body;
+      const timeZone = isValidTimeZone(body.timeZone) ? body.timeZone : "UTC";
       const userId = getUserId(req);
-      const userEvents = await storage.getEventsByUser(userId);
 
-      // Determine current season
+      // Resolve the location for local advice. Never substitute a default city.
+      let resolvedLocation: { name: string; lat: number; lon: number } | null = null;
+
+      if (adviceMode === "local") {
+        if (!body.location) {
+          return res.status(400).json({
+            message: "A valid location is required for local advice. Set a location or switch to general advice mode.",
+            missingLocation: true
+          });
+        }
+
+        const geocoded = await geocodeLocation(body.location);
+        if (!geocoded) {
+          return res.status(400).json({
+            message: `Could not resolve "${body.location}" to a valid location. Please set a valid location or switch to general advice mode.`,
+            missingLocation: true
+          });
+        }
+
+        resolvedLocation = { name: geocoded.resolvedName, lat: geocoded.lat, lon: geocoded.lon };
+      }
+
+      // Build context once for this message
       const now = new Date();
-      const currentSeason = getSeasonForDate(now);
 
-      // Build context data directly - similar structure to the /api/assistant/context endpoint
-      const contextData = {
-        timestamp: now.toISOString(),
-        location: userLocation,
-        season: currentSeason,
-        weather: weatherData && weatherData.forecasts.length > 0 ? {
-          current: {
-            temperature: weatherData.forecasts[0].temperature, // Already in Fahrenheit
-            conditions: weatherData.forecasts[0].weatherDescription,
-            humidity: weatherData.forecasts[0].humidity,
-            wind: Math.round(weatherData.forecasts[0].wind) // Already in mph
-          },
-          forecast: weatherData.forecasts.slice(0, 6).map((day: any) => ({
-            date: day.date,
-            temperature: day.temperature, // Already in Fahrenheit
-            conditions: day.weatherDescription
-          }))
-        } : null,
-        events: userEvents.map(event => ({
-          id: event.id,
-          title: event.title,
-          startDate: event.startDate,
-          endDate: event.endDate,
-          isWeatherDependent: event.checkWeather
-        }))
-      };
+      let weather: WeatherResponse | null = null;
+      if (adviceMode === "local" && resolvedLocation) {
+        const weatherData = await fetchComprehensiveWeather({ lat: resolvedLocation.lat, lon: resolvedLocation.lon });
+        if (weatherData && weatherData.forecasts.length > 0) {
+          weather = formatWeatherData(weatherData);
+        }
+      }
 
-      // Prepare messages for API
+      // Season derives from the resolved location's hemisphere; omitted otherwise
+      const season = resolvedLocation ? getSeasonForDate(now, resolvedLocation.lat >= 0) : null;
+
+      // Calendar occurrences for the requested interval (next 7 days), expanded
+      // with the same recurrence rules the calendar display uses
+      const rangeEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const storedEvents = await storage.getEventsByUser(userId);
+      const upcomingEvents = expandRecurringEvents(storedEvents, now, rangeEnd);
+
+      // Project details when the request concerns a project
+      const userProjects = await storage.getProjectsByUser(userId);
+      const lowerMessage = message.toLowerCase();
+      const mentionedProjects = userProjects.filter(project =>
+        project.name && lowerMessage.includes(project.name.toLowerCase())
+      );
+
+      const contextLines: string[] = [];
+      contextLines.push(`Current date and time at the farm: ${formatFarmDateTime(now, timeZone)} (${timeZone})`);
+      contextLines.push(`Advice mode: ${adviceMode === "local" ? "local (location-specific)" : "general (not location-specific)"}`);
+      if (resolvedLocation) {
+        contextLines.push(`Farm location: ${resolvedLocation.name}`);
+      }
+      if (season) {
+        contextLines.push(`Season at the farm location: ${season}`);
+      }
+
+      if (adviceMode === "local") {
+        if (weather) {
+          contextLines.push(`Weather for ${weather.location}:
+- Source: Open-Meteo, fetched at ${weather.fetchedAt}
+- Units: ${weather.units.temperature} temperature, ${weather.units.wind} wind speed, ${weather.units.precipitation} precipitation
+- Current: ${weather.current.temperature}${weather.units.temperature}, ${weather.current.weatherDescription}, wind ${weather.current.wind} ${weather.units.wind}, humidity ${weather.current.humidity ?? "unavailable"}, precipitation ${weather.current.precipitation} ${weather.units.precipitation}
+- Forecast by actual date:
+${weather.forecast.map(day => `  - ${day.date}: ${day.weatherDescription}, high ${day.temp_max}${weather!.units.temperature}, low ${day.temp_min}${weather!.units.temperature}, precipitation ${day.precipitation} ${weather!.units.precipitation}`).join('\n')}`);
+        } else {
+          contextLines.push("Weather data is unavailable for this request. Do not invent weather measurements.");
+        }
+      } else {
+        contextLines.push("Weather data is not part of this request. Do not state location-specific weather as fact.");
+      }
+
+      if (upcomingEvents.length > 0) {
+        contextLines.push(`Calendar occurrences for the next 7 days (farm time zone):
+${upcomingEvents.map(event => {
+  const start = formatFarmDateTime(new Date(event.startDate), timeZone);
+  const end = formatFarmDateTime(new Date(event.endDate), timeZone);
+  return `- [Event #${event.id}] ${event.title}: ${start} to ${end}${event.checkWeather ? " (weather dependent)" : ""}${event.isRecurrenceInstance ? " (recurring occurrence)" : ""}`;
+}).join('\n')}`);
+      } else {
+        contextLines.push("No calendar occurrences fall within the next 7 days (farm time zone).");
+      }
+
+      if (mentionedProjects.length > 0) {
+        contextLines.push(`Project details for the projects this request concerns:
+${mentionedProjects.map(project => `- [Project #${project.id}] ${project.name}: ${project.description || "No description"} (status: ${project.status})`).join('\n')}`);
+      }
+
       const systemMessage = `You are a specialized AI assistant for agriculture and farming planning, focused on helping schedule and organize farm activities.
 
-Current date and time: ${new Date(contextData.timestamp).toLocaleString()}
-Current season: ${contextData.season}
-User location: ${contextData.location}
-${contextData.weather ? `
-Current weather: ${contextData.weather.current.temperature}°F, ${contextData.weather.current.conditions}
-Humidity: ${contextData.weather.current.humidity}%
-Wind: ${contextData.weather.current.wind} mph
-
-Weather forecast for the next ${contextData.weather.forecast.length} days:
-${contextData.weather.forecast.map((day: any, index: number) => 
-  `- Day ${index + 1}: ${day.temperature}°F, ${day.conditions}`
-).join('\n')}
-` : ''}
-${contextData.events && contextData.events.length > 0 ? `
-Upcoming calendar events:
-${contextData.events.slice(0, 5).map(event => {
-  const startDate = new Date(event.startDate);
-  return `- ${event.title} on ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}${event.isWeatherDependent ? ' (Weather dependent)' : ''}`;
-}).join('\n')}
-` : ''}
+CONTEXT (built fresh for this request; it overrides anything from earlier in the conversation):
+${contextLines.join('\n')}
 
 CALENDAR MANAGEMENT CAPABILITIES:
 - You can create events with create_calendar_event
@@ -673,15 +1054,24 @@ For calendar events:
 4. Include a detailed description with helpful tips
 5. Set a location when relevant
 
-Try to be helpful by suggesting optimal timing for agricultural activities based on the current season and weather conditions.`;
+Try to be helpful by suggesting optimal timing for agricultural activities based on the context above. In general advice mode, give advice that does not depend on location-specific weather.`;
 
-      // Add system message and user's message
-      const apiMessages = [
+      // Existing conversation history, minus stored system messages so old
+      // context cannot override the fresh context above
+      const historyMessages = (Array.isArray(conversation.messages) ? conversation.messages : [])
+        .filter((msg: any) => msg.role !== "system");
+      const updatedMessages: any[] = [
+        ...historyMessages,
+        { role: "user", content: message }
+      ];
+
+      // Add system message and conversation messages
+      const apiMessages: any[] = [
         { role: "system", content: systemMessage },
         ...updatedMessages
       ];
 
-      // Define tools for web search and weather data
+      // Define tools for web search, weather data, and calendar/file management
       const tools = [
         {
           type: "function" as const,
@@ -762,7 +1152,7 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           type: "function" as const,
           function: {
             name: "update_calendar_event",
-            description: "Update an existing calendar event",
+            description: "Update one or more fields of an existing calendar event. Only send the fields that change.",
             parameters: {
               type: "object",
               properties: {
@@ -966,760 +1356,135 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
               required: []
             }
           }
-        },
-        {
-          type: "function" as const,
-          function: {
-            name: "analyze_farm_data",
-            description: "Analyze user's uploaded farm data files (yield data, weather logs, soil reports, etc.)",
-            parameters: {
-              type: "object",
-              properties: {
-                fileId: {
-                  type: "number",
-                  description: "ID of the file to analyze"
-                },
-                analysisType: {
-                  type: "string",
-                  description: "Type of analysis (yield_analysis, weather_patterns, soil_health, growth_tracking, etc.)"
-                }
-              },
-              required: ["fileId", "analysisType"]
-            }
-          }
         }
       ];
 
-      // Call OpenAI API with model fallback
-      let response;
+      // Bounded tool loop: every model request uses the single configured
+      // CHAT_MODEL (no model cascade). Execute ALL tool calls of a response,
+      // preserving call IDs, then continue until a final reply or the limit.
+      const mutations: MutationResult[] = [];
+      let finalText: string | null = null;
+      let unexecutedTools: string[] = [];
+      let upstreamError: string | null = null;
+
       try {
-        // First attempt with o3-mini model
-        response = await openai.chat.completions.create({
-          model: "o3-mini",
-          messages: apiMessages,
-          reasoning_effort: "low", // New parameter for o3-mini: low, medium, or high
-          max_completion_tokens: 500, // Use max_completion_tokens for o3-mini models
-          tools: tools
-          // Note: o3-mini doesn't support temperature parameter
-        });
-      } catch (modelError: unknown) {
-        const errorMessage = modelError instanceof Error ? modelError.message : String(modelError);
-        console.warn("o3-mini model error, falling back to gpt-4o:", errorMessage);
-        try {
-          // Fallback to gpt-4o
-          response = await openai.chat.completions.create({
-            model: "gpt-4.1",
+        // Created inside the guarded region so a missing key or provider
+        // outage surfaces as an explicit upstream failure, not a generic 500.
+        const chat = await createChatClient();
+
+        for (let step = 1; step <= TOOL_LOOP_LIMIT; step++) {
+          const response = await chat.chat.completions.create({
+            model: CHAT_MODEL,
             messages: apiMessages,
-            temperature: 0.7,
-            max_tokens: 500,
-            tools: tools
+            tools
           });
-        } catch (fallbackError: unknown) {
-          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-          console.warn("gpt-4o model error, falling back to gpt-3.5-turbo:", fallbackErrorMessage);
-          // Final fallback to gpt-3.5-turbo
-          response = await openai.chat.completions.create({
-            model: "gpt-4.1-mini",
-            messages: apiMessages,
-            temperature: 0.7,
-            max_tokens: 500,
-            tools: tools
+
+          const choice = response.choices[0]?.message;
+          if (!choice) {
+            throw new Error("The model returned an empty response");
+          }
+
+          const toolCalls = choice.tool_calls ?? [];
+          if (toolCalls.length === 0) {
+            finalText = choice.content || "I'm sorry, I couldn't process your request.";
+            break;
+          }
+
+          if (step === TOOL_LOOP_LIMIT) {
+            // Out of budget: do not execute, do not claim completion
+            unexecutedTools = toolCalls
+              .map(call => call?.function?.name || "unknown_tool")
+              .filter((name, idx, all) => all.indexOf(name) === idx);
+            break;
+          }
+
+          apiMessages.push({
+            role: "assistant",
+            content: choice.content ?? null,
+            tool_calls: toolCalls
           });
-        }
-      }
-
-      // Handle function calling if the model calls a tool
-      if (response.choices[0].message.tool_calls && response.choices[0].message.tool_calls.length > 0) {
-        const toolCall = response.choices[0].message.tool_calls[0];
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
-
-        // Add the assistant's tool call message to the conversation
-        updatedMessages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: [toolCall]
-        } as any);
-
-        // Add the assistant message with tool_calls to apiMessages
-        (apiMessages as any).push({
-          role: "assistant",
-          content: null, 
-          tool_calls: [{
-            id: toolCall.id,
-            type: "function",
-            function: {
-              name: functionName,
-              arguments: toolCall.function.arguments
-            }
-          }]
-        });
-
-        let toolResponse = "";
-
-        // Handle different tool types
-        if (functionName === "search_web") {
-          const searchQuery = functionArgs.query;
-          console.log("Performing web search for query:", searchQuery);
-
-          // Add a visible message to the user about the search
+          // Persist the tool_calls turn too: a stored tool result must always
+          // be preceded by the assistant message that requested it, or the
+          // replayed history is an invalid model message sequence.
           updatedMessages.push({
             role: "assistant",
-            content: `I'll search for information about: ${searchQuery}`
+            content: choice.content ?? null,
+            tool_calls: toolCalls
           });
 
-          // Execute the web search
-          toolResponse = await searchWeb({ query: searchQuery });
-
-        } else if (functionName === "get_weather") {
-          const location = functionArgs.location;
-          console.log("Getting weather data for location:", location);
-
-          // Add a visible message to the user about getting weather
-          updatedMessages.push({
-            role: "assistant",
-            content: `I'll check the current weather and forecast for ${location}`
-          });
-
-          // Get weather data
-          const weatherData = await fetchComprehensiveWeather(location);
-
-          if (weatherData) {
-            // Get agricultural recommendations based on weather
-            const recommendations = getAgricultureRecommendations(weatherData);
-
-            // Combine weather data and recommendations
-            toolResponse = JSON.stringify({
-              weather: weatherData,
-              recommendations: recommendations
+          for (const toolCall of toolCalls) {
+            if (!toolCall?.id || !toolCall?.function?.name) continue;
+            const result = await executeToolCall(toolCall, userId);
+            apiMessages.push({
+              role: "tool",
+              content: result.content,
+              tool_call_id: toolCall.id
             });
-          } else {
-            toolResponse = "I couldn't retrieve weather information for that location. Please check the spelling or try a different location.";
-          }
-        } else if (functionName === "create_calendar_event") {
-          const eventData = functionArgs;
-          console.log("Creating calendar event from assistant:", eventData);
-
-          // Validate the event data
-          const validatedEvent = insertEventSchema.parse({
-            ...eventData,
-            startDate: new Date(eventData.startDate),
-            endDate: new Date(eventData.endDate),
-            userId: getUserId(req), // Default user ID
-          });
-
-          // Insert the event using the storage interface
-          const newEvent = await storage.createEvent(validatedEvent);
-
-          toolResponse = JSON.stringify({
-            success: true,
-            event: newEvent
-          });
-        } else if (functionName === "update_calendar_event") {
-          const eventData = functionArgs;
-          console.log("Updating calendar event from assistant:", eventData);
-
-          // Validate the event data
-          const validatedEvent = insertEventSchema.parse({
-            ...eventData,
-            userId: getUserId(req), // Default user ID
-          });
-
-          // Update the event using the storage interface
-          const updatedEvent = await storage.updateEvent(eventData.eventId, validatedEvent);
-
-          toolResponse = JSON.stringify({
-            success: true,
-            event: updatedEvent
-          });
-        } else if (functionName === "delete_calendar_event") {
-          console.log("Deleting calendar event from assistant:", functionArgs.eventId);
-
-          // Delete the event using the storage interface
-          await storage.deleteEvent(functionArgs.eventId);
-
-          toolResponse = JSON.stringify({
-            success: true,
-            message: "Event deleted successfully"
-          });
-        } else if (functionName === "search_calendar_events") {
-          console.log("Searching calendar events:", functionArgs);
-
-          // Default to user 1 for demo
-          const userId = getUserId(req);
-          let events = [];
-
-          // If we have a date range, use that for searching
-          if (functionArgs.startDate && functionArgs.endDate) {
-            const startDate = new Date(functionArgs.startDate);
-            const endDate = new Date(functionArgs.endDate);
-            events = await storage.getEventsByDateRange(userId, startDate, endDate);
-          } 
-          // If we have a project ID, filter by project
-          else if (functionArgs.projectId) {
-            events = await storage.getEventsByProject(functionArgs.projectId);
-          }
-          // Otherwise, get all events
-          else {
-            events = await storage.getEventsByUser(userId);
-          }
-
-          // If we have a keyword, filter the results
-          if (functionArgs.keyword && events.length > 0) {
-            const keyword = functionArgs.keyword.toLowerCase();
-            events = events.filter(event => 
-              (event.title && event.title.toLowerCase().includes(keyword)) || 
-              (event.description && event.description.toLowerCase().includes(keyword))
-            );
-          }
-
-          toolResponse = JSON.stringify({
-            success: true,
-            events: events
-          });
-        } else if (functionName === "get_or_create_project") {
-          const projectData = functionArgs;
-          console.log("Getting or creating project from assistant:", projectData.name);
-
-          // Get all projects for user 1
-          const allProjects = await storage.getProjectsByUser(getUserId(req));
-
-          // Check if project already exists
-          const existingProject = allProjects.find(project => 
-            project.name.toLowerCase() === projectData.name.toLowerCase()
-          );
-
-          if (existingProject) {
-            toolResponse = JSON.stringify({
-              success: true,
-              project: existingProject,
-              isNew: false
+            updatedMessages.push({
+              role: "tool",
+              content: result.content,
+              tool_call_id: toolCall.id
             });
-          } else {
-            // Create new project using the storage interface
-            const newProject = await storage.createProject({
-              name: projectData.name,
-              description: projectData.description || "",
-              status: "active",
-              startDate: new Date(),
-              endDate: null,
-              userId: getUserId(req) // from session
-            });
-
-            toolResponse = JSON.stringify({
-              success: true,
-              project: newProject,
-              isNew: true
-            });
-          }
-        } else if (functionName === "read_user_file") {
-          const { fileId, filename } = functionArgs;
-          console.log("Reading user file:", fileId || filename);
-
-          let file;
-          if (fileId) {
-            file = await storage.getUserFile(fileId);
-          } else if (filename) {
-            // Find file by name for the user
-            const userFiles = await storage.getUserFilesByUser(getUserId(req));
-            file = userFiles.find(f => f.originalName === filename || f.filename === filename);
-          }
-
-          if (file) {
-            toolResponse = JSON.stringify({
-              success: true,
-              file: {
-                id: file.id,
-                filename: file.originalName,
-                fileType: file.fileType,
-                size: file.fileSize,
-                uploadDate: file.uploadDate,
-                description: file.description,
-                metadata: file.metadata
-              },
-              content: `File content would be read from: ${file.filePath}` // Placeholder for actual file reading
-            });
-          } else {
-            toolResponse = JSON.stringify({
-              success: false,
-              error: "File not found"
-            });
-          }
-        } else if (functionName === "list_user_files") {
-          const { fileType, projectId } = functionArgs;
-          console.log("Listing user files:", { fileType, projectId });
-
-          let files;
-          if (fileType) {
-            files = await storage.getUserFilesByType(getUserId(req), fileType);
-          } else if (projectId) {
-            files = await storage.getUserFilesByProject(projectId);
-          } else {
-            files = await storage.getUserFilesByUser(getUserId(req));
-          }
-
-          toolResponse = JSON.stringify({
-            success: true,
-            files: files.map(file => ({
-              id: file.id,
-              filename: file.originalName,
-              fileType: file.fileType,
-              size: file.fileSize,
-              uploadDate: file.uploadDate,
-              description: file.description,
-              projectId: file.projectId
-            }))
-          });
-        } else if (functionName === "create_user_document") {
-          const { title, content, documentType, projectId, tags } = functionArgs;
-          console.log("Creating user document:", title);
-
-          const documentData = {
-            userId: getUserId(req), // Default user ID
-            title,
-            content,
-            documentType: documentType || "note",
-            projectId: projectId || null,
-            tags: tags || null,
-            isPublic: false
-          };
-
-          const newDocument = await storage.createUserDocument(documentData);
-          
-          toolResponse = JSON.stringify({
-            success: true,
-            document: {
-              id: newDocument.id,
-              title: newDocument.title,
-              documentType: newDocument.documentType,
-              createdAt: newDocument.createdAt,
-              projectId: newDocument.projectId
+            if (result.mutation) {
+              mutations.push(result.mutation);
             }
-          });
-        } else if (functionName === "list_user_documents") {
-          const { documentType, projectId } = functionArgs;
-          console.log("Listing user documents:", { documentType, projectId });
-
-          let documents;
-          if (documentType) {
-            documents = await storage.getUserDocumentsByType(getUserId(req), documentType);
-          } else if (projectId) {
-            documents = await storage.getUserDocumentsByProject(projectId);
-          } else {
-            documents = await storage.getUserDocumentsByUser(getUserId(req));
-          }
-
-          toolResponse = JSON.stringify({
-            success: true,
-            documents: documents.map(doc => ({
-              id: doc.id,
-              title: doc.title,
-              documentType: doc.documentType,
-              createdAt: doc.createdAt,
-              updatedAt: doc.updatedAt,
-              projectId: doc.projectId,
-              tags: doc.tags
-            }))
-          });
-        } else if (functionName === "analyze_farm_data") {
-          const { fileId, analysisType } = functionArgs;
-          console.log("Analyzing farm data:", { fileId, analysisType });
-
-          const file = await storage.getUserFile(fileId);
-          if (!file) {
-            toolResponse = JSON.stringify({
-              success: false,
-              error: "File not found"
-            });
-          } else {
-            // This is a placeholder for actual data analysis logic
-            // In a real implementation, you would read the file content and perform the analysis
-            const analysisResult = {
-              yield_analysis: "Based on your crop yield data, average productivity is 15% above regional benchmarks.",
-              weather_patterns: "Weather data shows optimal growing conditions during spring months with consistent precipitation.",
-              soil_health: "Soil test results indicate good nitrogen levels but recommend phosphorus supplementation.",
-              growth_tracking: "Plant growth rates are within expected parameters for this variety and climate zone."
-            };
-
-            toolResponse = JSON.stringify({
-              success: true,
-              analysis: {
-                fileId: file.id,
-                filename: file.originalName,
-                analysisType,
-                result: analysisResult[analysisType as keyof typeof analysisResult] || "Analysis completed successfully.",
-                timestamp: new Date().toISOString()
-              }
-            });
           }
         }
-
-        // Add the tool response to messages array
-        updatedMessages.push({
-          role: "tool",
-          content: toolResponse,
-          tool_call_id: toolCall.id
-        });
-
-        // Add tool message to API messages
-        apiMessages.push({
-          role: "tool",
-          content: toolResponse,
-          tool_call_id: toolCall.id
-        });
-
-        // Get a second response from the model with the tool results
-        const secondResponse = await openai.chat.completions.create({
-          model: "gpt-4o", // Use gpt-4o for handling tool results (more reliable)
-          messages: apiMessages,
-          temperature: 0.7,
-          max_tokens: 800,
-          tools: tools // Keep providing tools for follow-up responses
-        });
-
-        // Get the AI response that incorporates the tool results
-        const aiResponse = secondResponse.choices[0].message.content || "I'm sorry, I couldn't process your request.";
-
-        // Add the final AI response to conversation
-        updatedMessages.push({ role: "assistant", content: aiResponse });
-
-      } else {
-        // Handle normal non-function response
-        const aiResponse = response.choices[0].message.content || "I'm sorry, I couldn't process your request.";
-        updatedMessages.push({ role: "assistant", content: aiResponse });
+      } catch (err) {
+        upstreamError = err instanceof Error ? err.message : String(err);
+        console.error("Assistant model request failed:", upstreamError);
       }
+
+      if (upstreamError) {
+        if (mutations.length === 0) {
+          return res.status(502).json({
+            message: `The assistant model request failed: ${upstreamError}. No changes were saved.`
+          });
+        }
+        // An upstream failure after successful writes must expose those writes
+        // as completed; retrying will not duplicate them.
+        finalText =
+          `The assistant service failed partway through this request (${upstreamError}). ` +
+          `Changes that were already saved: ${describeMutations(mutations.filter(m => m.ok))}. ` +
+          `They are complete; retrying the same request will not duplicate them.`;
+      }
+
+      if (finalText === null) {
+        const completed = mutations.filter(m => m.ok);
+        const failed = mutations.filter(m => !m.ok);
+        finalText =
+          `I reached the tool execution limit of ${TOOL_LOOP_LIMIT} steps without a final reply.` +
+          (unexecutedTools.length > 0
+            ? ` Requested actions NOT executed: ${unexecutedTools.join(", ")}.`
+            : "") +
+          (completed.length > 0
+            ? ` Completed changes: ${describeMutations(completed)}.`
+            : " No changes were made.") +
+          (failed.length > 0 ? ` Failed changes (not saved): ${failed.length}.` : "");
+      }
+
+      updatedMessages.push({ role: "assistant", content: finalText });
 
       const updatedConversation = await storage.updateConversation(id, updatedMessages);
-      return res.status(200).json(updatedConversation);
+      return res.status(200).json({ conversation: updatedConversation, mutations });
     } catch (err) {
-      console.error("OpenAI API Error:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Get calendar events as ICS file
-  app.get("/api/events/ics", async (req: Request, res: Response) => {
-    try {
-      // Demo user id = 1 for simplicity (in this demo app we auto-login as demo user)
-      const userId = getUserId(req);
-
-      // Get all events for the user
-      const userEvents = await storage.getEventsByUser(userId);
-
-      // Convert to ICS format
-      const icsContent = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//Agri-Cal//Farm Friend//EN',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH'
-      ];
-
-      userEvents.forEach(event => {
-        const startDate = new Date(event.startDate);
-        const endDate = new Date(event.endDate);
-
-        // Format dates as YYYYMMDDTHHMMSSZ
-        const formatICSDate = (date: Date) => {
-          return date.toISOString().replace(/-|:|\.\d+/g, '').slice(0, 15) + 'Z';
-        };
-
-        const eventBlock = [
-          'BEGIN:VEVENT',
-          `UID:${event.id}@agriplanner.com`,
-          `DTSTAMP:${formatICSDate(new Date())}`,
-          `DTSTART:${formatICSDate(startDate)}`,
-          `DTEND:${formatICSDate(endDate)}`,
-          `SUMMARY:${event.title}`,
-        ];
-
-        if (event.description) {
-          eventBlock.push(`DESCRIPTION:${event.description.replace(/\n/g, '\\n')}`);
-        }
-
-        if (event.location) {
-          eventBlock.push(`LOCATION:${event.location}`);
-        }
-
-        // Add custom properties for Agri-Cal specific features
-        if (event.checkWeather) {
-          eventBlock.push('X-AGRICAL-CHECKWEATHER:TRUE');
-        }
-
-        if (event.projectId) {
-          eventBlock.push(`X-AGRICAL-PROJECTID:${event.projectId}`);
-        }
-
-        eventBlock.push('END:VEVENT');
-        icsContent.push(...eventBlock);
-      });
-
-      icsContent.push('END:VCALENDAR');
-
-      // Set the response headers for an ICS file download
-      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-      res.setHeader('Content-Disposition', 'attachment; filename=farm-calendar.ics');
-
-      return res.status(200).send(icsContent.join('\r\n'));
-    } catch (err) {
-      console.error("Error generating ICS file:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Get contextual information for the assistant
-  app.get("/api/assistant/context", async (req: Request, res: Response) => {
-    try {
-      // Get location from query params or use default
-      const location = (req.query.location as string) || "New York";
-      const userId = getUserId(req); // Default demo user
-
-      // Get weather data
-      const weatherData = await fetchComprehensiveWeather(location);
-      if (!weatherData) {
-        return res.status(404).json({ message: "Could not retrieve weather data for this location" });
-      }
-
-      // Get user's calendar events
-      const userEvents = await storage.getEventsByUser(userId);
-
-      // Determine current season
-      const currentDate = new Date();
-      const currentSeason = getSeasonForDate(currentDate);
-
-      // Build context object
-      const context = {
-        timestamp: currentDate.toISOString(),
-        location: location,
-        season: currentSeason,
-        weather: {
-          current: {
-            temperature: weatherData.forecasts[0].temperature, // Already in Fahrenheit
-            conditions: weatherData.forecasts[0].weatherDescription,
-            humidity: weatherData.forecasts[0].humidity,
-            wind: Math.round(weatherData.forecasts[0].wind) // Already in mph
-          },
-          forecast: weatherData.forecasts.slice(0, 6).map((day: any) => ({
-            date: day.date,
-            temperature: day.temperature, // Already in Fahrenheit
-            conditions: day.weatherDescription
-          }))
-        },
-        events: userEvents.map(event => ({
-          id: event.id,
-          title: event.title,
-          startDate: event.startDate,
-          endDate: event.endDate,
-          isWeatherDependent: event.checkWeather
-        }))
-      };
-
-      return res.status(200).json(context);
-    } catch (err) {
-      console.error("Error fetching assistant context:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Assistant function calling API endpoints
-  // Create a calendar event
-  app.post("/api/assistant/functions/create-event", async (req: Request, res: Response) => {
-    try {
-      const eventData = req.body;
-      console.log("Creating calendar event from assistant:", eventData);
-
-      // Handle both string and Date objects for dates
-      const { startDate, endDate, ...restData } = eventData;
-
-      // Convert dates if they're strings
-      const parsedData = {
-        ...restData,
-        userId: getUserId(req), // Default user ID
-        startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
-        endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
-      };
-
-      // Validate the event data
-      const validatedEvent = insertEventSchema.parse(parsedData);
-
-      // Insert the event using the storage interface
-      const newEvent = await storage.createEvent(validatedEvent);
-
-      return res.status(200).json({
-        success: true,
-        event: newEvent
-      });
-    } catch (err) {
-      console.error("Error creating event from assistant:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Get or create a project
-  app.post("/api/assistant/functions/get-or-create-project", async (req: Request, res: Response) => {
-    try {
-      const { name, description } = req.body;
-      console.log("Getting or creating project from assistant:", name);
-
-      // Get all projects for user 1
-      const allProjects = await storage.getProjectsByUser(getUserId(req));
-
-      // Check if project already exists
-      const existingProject = allProjects.find(project => 
-        project.name.toLowerCase() === name.toLowerCase()
-      );
-
-      if (existingProject) {
-        return res.status(200).json({
-          success: true,
-          project: existingProject,
-          isNew: false
-        });
-      }
-
-      // Create new project using the storage interface
-      const newProject = await storage.createProject({
-        name,
-        description: description || "",
-        status: "active",
-        startDate: new Date(),
-        endDate: null,
-        userId: getUserId(req) // from session
-      });
-
-      return res.status(200).json({
-        success: true,
-        project: newProject,
-        isNew: true
-      });
-    } catch (err) {
-      console.error("Error getting or creating project from assistant:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Create multiple calendar events in a batch
-  app.post("/api/assistant/functions/create-events-batch", async (req: Request, res: Response) => {
-    try {
-      const { events: eventsBatch } = req.body;
-      console.log("Creating calendar events batch from assistant:", eventsBatch.length, "events");
-
-      const createdEvents = [];
-
-      // Process each event
-      for (const eventData of eventsBatch) {
-        // Handle both string and Date objects for dates
-        const { startDate, endDate, ...restData } = eventData;
-
-        // Convert dates if they're strings
-        const parsedData = {
-          ...restData,
-          userId: getUserId(req), // Default user ID
-          startDate: typeof startDate === 'string' ? new Date(startDate) : startDate,
-          endDate: typeof endDate === 'string' ? new Date(endDate) : endDate
-        };
-
-        // Validate the event data
-        const validatedEvent = insertEventSchema.parse(parsedData);
-
-        // Insert the event
-        const newEvent = await storage.createEvent(validatedEvent);
-        createdEvents.push(newEvent);
-      }
-
-      return res.status(200).json({
-        success: true,
-        events: createdEvents
-      });
-    } catch (err) {
-      console.error("Error creating events batch from assistant:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Update the system message to add information about the new tools
-  app.get("/api/assistant/update-system-message", async (req: Request, res: Response) => {
-    try {
-      // Add information about the new tools to the systemMessage in the conversation endpoint
-      const systemMessageUpdates = `
-You can now also:
-1. Update existing events with update_calendar_event
-2. Delete events with delete_calendar_event
-3. Search calendar events by keywords or date ranges
-
-For updating events, you need the event ID (which you can get from the context or by searching)
-For deleting events, you only need the event ID`;
-
-      return res.status(200).json({ success: true, message: "Assistant system message updated" });
-    } catch (err) {
-      console.error("Error updating assistant system message:", err);
-      return handleApiError(err, res);
-    }
-  });
-
-  // Update the real-time weather data API
-  app.get("/api/weather/realtime", async (req: Request, res: Response) => {
-    try {
-      const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
-      }
-
-      const weatherData = await fetchComprehensiveWeather(location);
-      if (!weatherData) {
-        return res.status(404).json({ 
-          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
-        });
-      }
-
-      const formattedData = formatWeatherData(weatherData);
-      return res.status(200).json(formattedData.current);
-    } catch (err) {
-      return handleApiError(err, res);
-    }
-  });
-
-  // Update the weather-dependent events endpoint
-  app.get("/api/events/weather-dependent", async (req: Request, res: Response) => {
-    try {
-      const location = req.query.location as string;
-      if (!location) {
-        return res.status(400).json({ message: "Location is required" });
-      }
-
-      const weatherData = await fetchComprehensiveWeather(location);
-      if (!weatherData) {
-        return res.status(404).json({ 
-          message: "Could not find weather data for this location. Please try a more specific location (e.g., 'Eugene, Oregon' instead of 'Lane County')." 
-        });
-      }
-
-      // Get events that depend on weather
-      const events = await storage.getEventsByUser(getUserId(req)); // from session
-      const weatherDependentEvents = events.filter(event => event.checkWeather);
-
-      const formattedData = formatWeatherData(weatherData);
-      return res.status(200).json({
-        weather: formattedData,
-        events: weatherDependentEvents
-      });
-    } catch (err) {
+      console.error("Chat message error:", err);
       return handleApiError(err, res);
     }
   });
 
   // User File Management Routes
-  app.get("/api/files", async (req: Request, res: Response) => {
+  app.get("/api/files", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = getUserId(req); // Default demo user
+      const userId = getUserId(req);
       const fileType = req.query.fileType as string;
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
 
       let files;
       if (fileType) {
         files = await storage.getUserFilesByType(userId, fileType);
-      } else if (projectId) {
-        files = await storage.getUserFilesByProject(projectId);
+      } else if (projectId !== undefined) {
+        files = (await storage.getUserFilesByProject(projectId)).filter(file => file.userId === userId);
       } else {
         files = await storage.getUserFilesByUser(userId);
       }
@@ -1730,18 +1495,15 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.get("/api/files/:id", async (req: Request, res: Response) => {
+  app.get("/api/files/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const file = await storage.getUserFile(id);
-      
-      if (!file) {
-        return res.status(404).json({ message: "File not found" });
-      }
+      const file = await ownedOr404(req, res, () => storage.getUserFile(id));
+      if (!file) return;
 
       // Update last accessed timestamp
       await storage.updateUserFile(id, { lastAccessed: new Date() });
-      
+
       return res.status(200).json(file);
     } catch (err) {
       return handleApiError(err, res);
@@ -1750,12 +1512,12 @@ For deleting events, you only need the event ID`;
 
   app.post("/api/files", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = getUserId(req); // Default demo user
+      const userId = getUserId(req);
       const fileData = { ...req.body, userId };
-      
+
       const validatedFile = insertUserFileSchema.parse(fileData);
       const newFile = await storage.createUserFile(validatedFile);
-      
+
       return res.status(201).json(newFile);
     } catch (err) {
       return handleApiError(err, res);
@@ -1765,12 +1527,22 @@ For deleting events, you only need the event ID`;
   app.put("/api/files/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const updatedFile = await storage.updateUserFile(id, req.body);
-      
+      const file = await ownedOr404(req, res, () => storage.getUserFile(id));
+      if (!file) return;
+
+      const updates = updateUserFileRouteSchema.parse(req.body);
+      if (updates.projectId !== undefined && updates.projectId !== null) {
+        const projectError = await ownedProjectOrError(getUserId(req), updates.projectId);
+        if (projectError) {
+          return res.status(400).json({ message: projectError });
+        }
+      }
+      const updatedFile = await storage.updateUserFile(id, updates);
+
       if (!updatedFile) {
         return res.status(404).json({ message: "File not found" });
       }
-      
+
       return res.status(200).json(updatedFile);
     } catch (err) {
       return handleApiError(err, res);
@@ -1780,34 +1552,34 @@ For deleting events, you only need the event ID`;
   app.delete("/api/files/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
+      const file = await ownedOr404(req, res, () => storage.getUserFile(id));
+      if (!file) return;
+
       const deleted = await storage.deleteUserFile(id);
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "File not found" });
       }
-      
+
       return res.status(200).json({ message: "File deleted successfully" });
     } catch (err) {
       return handleApiError(err, res);
     }
   });
 
-  app.get("/api/files/:id/content", async (req: Request, res: Response) => {
+  app.get("/api/files/:id/content", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const file = await storage.getUserFile(id);
-      
-      if (!file) {
-        return res.status(404).json({ message: "File not found" });
-      }
-      
+      const file = await ownedOr404(req, res, () => storage.getUserFile(id));
+      if (!file) return;
+
       // Extract content from metadata field
       let content = '';
       if (file.metadata && typeof file.metadata === 'object') {
         const metadata = file.metadata as any;
         content = metadata.content || metadata.rawContent || '';
       }
-      
+
       // Return the file content as plain text
       return res.status(200).type('text/plain').send(content);
     } catch (err) {
@@ -1816,17 +1588,17 @@ For deleting events, you only need the event ID`;
   });
 
   // User Document Management Routes
-  app.get("/api/documents", async (req: Request, res: Response) => {
+  app.get("/api/documents", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = getUserId(req); // Default demo user
+      const userId = getUserId(req);
       const documentType = req.query.documentType as string;
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
 
       let documents;
       if (documentType) {
         documents = await storage.getUserDocumentsByType(userId, documentType);
-      } else if (projectId) {
-        documents = await storage.getUserDocumentsByProject(projectId);
+      } else if (projectId !== undefined) {
+        documents = (await storage.getUserDocumentsByProject(projectId)).filter(doc => doc.userId === userId);
       } else {
         documents = await storage.getUserDocumentsByUser(userId);
       }
@@ -1837,15 +1609,12 @@ For deleting events, you only need the event ID`;
     }
   });
 
-  app.get("/api/documents/:id", async (req: Request, res: Response) => {
+  app.get("/api/documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const document = await storage.getUserDocument(id);
-      
-      if (!document) {
-        return res.status(404).json({ message: "Document not found" });
-      }
-      
+      const document = await ownedOr404(req, res, () => storage.getUserDocument(id));
+      if (!document) return;
+
       return res.status(200).json(document);
     } catch (err) {
       return handleApiError(err, res);
@@ -1854,12 +1623,12 @@ For deleting events, you only need the event ID`;
 
   app.post("/api/documents", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = getUserId(req); // Default demo user
+      const userId = getUserId(req);
       const documentData = { ...req.body, userId };
-      
+
       const validatedDocument = insertUserDocumentSchema.parse(documentData);
       const newDocument = await storage.createUserDocument(validatedDocument);
-      
+
       return res.status(201).json(newDocument);
     } catch (err) {
       return handleApiError(err, res);
@@ -1869,12 +1638,22 @@ For deleting events, you only need the event ID`;
   app.put("/api/documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const updatedDocument = await storage.updateUserDocument(id, req.body);
-      
+      const document = await ownedOr404(req, res, () => storage.getUserDocument(id));
+      if (!document) return;
+
+      const updates = updateUserDocumentRouteSchema.parse(req.body);
+      if (updates.projectId !== undefined && updates.projectId !== null) {
+        const projectError = await ownedProjectOrError(getUserId(req), updates.projectId);
+        if (projectError) {
+          return res.status(400).json({ message: projectError });
+        }
+      }
+      const updatedDocument = await storage.updateUserDocument(id, updates);
+
       if (!updatedDocument) {
         return res.status(404).json({ message: "Document not found" });
       }
-      
+
       return res.status(200).json(updatedDocument);
     } catch (err) {
       return handleApiError(err, res);
@@ -1884,130 +1663,16 @@ For deleting events, you only need the event ID`;
   app.delete("/api/documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
+      const document = await ownedOr404(req, res, () => storage.getUserDocument(id));
+      if (!document) return;
+
       const deleted = await storage.deleteUserDocument(id);
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Document not found" });
       }
-      
+
       return res.status(200).json({ message: "Document deleted successfully" });
-    } catch (err) {
-      return handleApiError(err, res);
-    }
-  });
-
-  // ICS Import — parse .ics file and create calendar events
-  app.post("/api/events/import-ics", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const { icsContent } = z.object({
-        icsContent: z.string().min(1, "ICS content is required"),
-      }).parse(req.body);
-
-      const userId = getUserId(req);
-      const events: InsertEvent[] = [];
-
-      // Split into VEVENT blocks (handle both \n and \r\n)
-      const normalized = icsContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      const blocks = normalized.split("BEGIN:VEVENT");
-      
-      for (let i = 1; i < blocks.length; i++) {
-        const block = blocks[i].split("END:VEVENT")[0];
-        if (!block) continue;
-
-        // Parse folded lines (RFC 5545 line folding: \n followed by space/tab)
-        const unfolded = block.replace(/\n[ \t]/g, "");
-        const lines = unfolded.split("\n");
-
-        let summary = "Imported Event";
-        let description = "";
-        let location = "";
-        let dtstart = "";
-        let dtend = "";
-
-        for (const rawLine of lines) {
-          const colonIdx = rawLine.indexOf(":");
-          if (colonIdx === -1) continue;
-          const prop = rawLine.substring(0, colonIdx).toUpperCase().trim();
-          let value = rawLine.substring(colonIdx + 1).trim();
-          
-          // Unescape ICS special chars
-          value = value.replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\").replace(/\\n/g, "\n");
-
-          switch (prop) {
-            case "SUMMARY": summary = value; break;
-            case "DESCRIPTION": description = value; break;
-            case "LOCATION": location = value; break;
-            case "DTSTART": dtstart = value; break;
-            case "DTEND": dtend = value; break;
-          }
-        }
-
-        if (!dtstart) continue; // Skip events without a start date
-
-        // Parse DTSTART (formats: YYYYMMDDTHHMMSSZ, YYYYMMDDTHHMMSS, YYYYMMDD)
-        const parseICSDate = (s: string): Date | null => {
-          // Remove timezone suffix if present
-          s = s.replace(/Z$/, "");
-          if (s.length === 8) {
-            // All-day: YYYYMMDD
-            const y = parseInt(s.substring(0, 4));
-            const m = parseInt(s.substring(4, 6)) - 1;
-            const d = parseInt(s.substring(6, 8));
-            return new Date(y, m, d, 9, 0, 0);
-          }
-          if (s.length >= 15) {
-            const y = parseInt(s.substring(0, 4));
-            const m = parseInt(s.substring(4, 6)) - 1;
-            const d = parseInt(s.substring(6, 8));
-            const h = parseInt(s.substring(9, 11));
-            const min = parseInt(s.substring(11, 13));
-            const sec = s.length >= 15 ? parseInt(s.substring(13, 15)) : 0;
-            return new Date(y, m, d, h, min, sec);
-          }
-          return null;
-        };
-
-        const startDate = parseICSDate(dtstart);
-        let endDate = parseICSDate(dtend);
-        
-        if (!startDate) continue;
-        if (!endDate) {
-          // Default: 1 hour after start
-          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
-        }
-
-        events.push({
-          userId,
-          title: summary,
-          description: description || null,
-          startDate,
-          endDate,
-          location: location || null,
-          projectId: null,
-          allDay: dtstart.length === 8, // All-day if date-only
-          checkWeather: true,
-          isRecurring: false,
-          recurringPattern: null,
-        });
-      }
-
-      if (events.length === 0) {
-        return res.status(400).json({ message: "No valid events found in ICS content" });
-      }
-
-      // Create all events
-      const created: Event[] = [];
-      for (const eventData of events) {
-        const valid = insertEventSchema.parse(eventData);
-        const event = await storage.createEvent(valid);
-        created.push(event);
-      }
-
-      return res.status(201).json({
-        message: `Imported ${created.length} events`,
-        count: created.length,
-        events: created,
-      });
     } catch (err) {
       return handleApiError(err, res);
     }

@@ -39,7 +39,7 @@ function CalendarDay({
 
   // Find weather data for this day if available
   const weather = weatherData?.find((forecast) => {
-    const forecastDate = new Date(forecast.date);
+    const forecastDate = new Date(`${forecast.date}T00:00:00`);
     return (
       forecastDate.getDate() === day.getDate() &&
       forecastDate.getMonth() === day.getMonth() &&

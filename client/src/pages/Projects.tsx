@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/lib/calendarUtils";
 import { PROJECT_COLORS } from "@/lib/colorUtils";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Projects() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -25,6 +26,7 @@ export default function Projects() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const { user } = useAuth();
   
   // Form state
   const [name, setName] = useState("");
@@ -40,6 +42,7 @@ export default function Projects() {
   
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
+    enabled: !!user,
   });
   
   const createProjectMutation = useMutation({
@@ -100,13 +103,13 @@ export default function Projects() {
   });
   
   const { data: projectEvents = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
-    queryKey: ["/api/events", selectedProject?.id],
+    queryKey: ["/api/events", "project", user?.id, selectedProject?.id],
     queryFn: async () => {
       if (!selectedProject) return [];
       const response = await apiRequest("GET", `/api/events?projectId=${selectedProject.id}`);
       return response.json();
     },
-    enabled: !!selectedProject
+    enabled: !!user && !!selectedProject
   });
   
   const resetForm = () => {

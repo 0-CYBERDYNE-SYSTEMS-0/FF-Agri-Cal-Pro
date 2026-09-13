@@ -41,6 +41,7 @@ export const events = pgTable("events", {
   checkWeather: boolean("check_weather").default(false),
   isRecurring: boolean("is_recurring").default(false),
   recurringPattern: json("recurring_pattern"),
+  uid: text("uid"), // ICS UID, kept so repeat imports cannot create silent duplicates
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
@@ -123,7 +124,8 @@ export const insertEventSchema = createInsertSchema(events).pick({
   location: true,
   checkWeather: true,
   isRecurring: true,
-  recurringPattern: true
+  recurringPattern: true,
+  uid: true
 });
 
 export const insertConversationSchema = createInsertSchema(conversations).pick({
@@ -184,7 +186,7 @@ export type WeatherForecast = {
   weatherDescription: string;
   icon: string;
   wind: number;
-  humidity: number;
+  humidity: number | null; // null when the provider does not report it
   precipitation: number;
   pressure?: number; // Air pressure
   visibility?: number; // Visibility in meters

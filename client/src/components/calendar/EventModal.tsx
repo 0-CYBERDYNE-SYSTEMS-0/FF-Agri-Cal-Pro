@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { getAiSuggestion } from "@/lib/openAiApi";
 import { getProjectColor } from "@/lib/colorUtils";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface EventModalProps {
   isOpen: boolean;
@@ -41,9 +42,11 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
+    enabled: !!user && isOpen,
   });
 
   // Reset form when modal opens/closes

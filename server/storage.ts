@@ -1,4 +1,8 @@
 import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, WeatherForecast } from "@shared/schema";
+import { getDb } from "../db";
+import { eq, and, gte, lte } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "@shared/schema";
 import * as bcrypt from "bcrypt";
 
 export interface IStorage {
@@ -16,10 +20,12 @@ export interface IStorage {
 
   // Event methods
   getEvent(id: number): Promise<Event | undefined>;
+  getEventByUid(userId: number, uid: string): Promise<Event | undefined>;
   getEventsByUser(userId: number): Promise<Event[]>;
   getEventsByProject(projectId: number): Promise<Event[]>;
   getEventsByDateRange(userId: number, startDate: Date, endDate: Date): Promise<Event[]>;
   createEvent(event: InsertEvent): Promise<Event>;
+  createEvents(events: InsertEvent[]): Promise<Event[]>;
   updateEvent(id: number, event: Partial<Event>): Promise<Event | undefined>;
   deleteEvent(id: number): Promise<boolean>;
 
@@ -195,7 +201,7 @@ export class MemStorage implements IStorage {
         location: "Compost Area",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: null }
+        recurringPattern: { frequency: "week", interval: 1, endDate: null }
       },
       {
         userId: user.id,
@@ -208,7 +214,7 @@ export class MemStorage implements IStorage {
         location: "Main Garden",
         checkWeather: true,
         isRecurring: true,
-        recurringPattern: { frequency: "daily", interval: 2, endDate: new Date(currentYear, currentMonth + 1, 14) }
+        recurringPattern: { frequency: "day", interval: 2, endDate: new Date(currentYear, currentMonth + 1, 14) }
       },
       {
         userId: user.id,
@@ -289,7 +295,7 @@ export class MemStorage implements IStorage {
         location: "All Gardens",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 10) }
+        recurringPattern: { frequency: "week", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 10) }
       },
       {
         userId: user.id,
@@ -369,7 +375,7 @@ export class MemStorage implements IStorage {
         location: "Vegetable Garden",
         checkWeather: true,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 30) }
+        recurringPattern: { frequency: "week", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 30) }
       },
       {
         userId: user.id,
@@ -421,7 +427,7 @@ export class MemStorage implements IStorage {
         location: "Compost Area",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: null }
+        recurringPattern: { frequency: "week", interval: 1, endDate: null }
       },
       
       // Future events
@@ -582,9 +588,9 @@ export class MemStorage implements IStorage {
 
   async createEvent(insertEvent: InsertEvent): Promise<Event> {
     const id = this.currentEventId++;
-    const event: Event = { 
-      ...insertEvent, 
-      id, 
+    const event: Event = {
+      ...insertEvent,
+      id,
       createdAt: new Date(),
       description: insertEvent.description || null,
       projectId: insertEvent.projectId || null,
@@ -592,7 +598,8 @@ export class MemStorage implements IStorage {
       location: insertEvent.location || null,
       checkWeather: insertEvent.checkWeather || null,
       isRecurring: insertEvent.isRecurring || null,
-      recurringPattern: insertEvent.recurringPattern || null
+      recurringPattern: insertEvent.recurringPattern || null,
+      uid: insertEvent.uid ?? null
     };
     this.events.set(id, event);
     return event;
@@ -609,6 +616,20 @@ export class MemStorage implements IStorage {
 
   async deleteEvent(id: number): Promise<boolean> {
     return this.events.delete(id);
+  }
+
+  async createEvents(eventsToInsert: InsertEvent[]): Promise<Event[]> {
+    const created: Event[] = [];
+    for (const eventData of eventsToInsert) {
+      created.push(await this.createEvent(eventData));
+    }
+    return created;
+  }
+
+  async getEventByUid(userId: number, uid: string): Promise<Event | undefined> {
+    return Array.from(this.events.values()).find(
+      (event) => event.userId === userId && event.uid === uid,
+    );
   }
 
   // Conversation methods
@@ -749,4 +770,222 @@ export class MemStorage implements IStorage {
   // Weather functionality removed in favor of OpenWeather API
 }
 
-export const storage = new MemStorage();
+// PostgreSQL storage backed by Drizzle over node-postgres, using the existing
+// schema in shared/schema.ts.
+export class DbStorage implements IStorage {
+  private db: NodePgDatabase<typeof schema>;
+
+  constructor(db: NodePgDatabase<typeof schema>) {
+    this.db = db;
+  }
+
+  // User methods
+  async getUser(id: number): Promise<User | undefined> {
+    const rows = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const rows = await this.db.select().from(users).where(eq(users.username, username)).limit(1);
+    return rows[0];
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const rows = await this.db.insert(users).values(user).returning();
+    return rows[0];
+  }
+
+  // Project methods
+  async getProject(id: number): Promise<Project | undefined> {
+    const rows = await this.db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getProjectsByUser(userId: number): Promise<Project[]> {
+    return this.db.select().from(projects).where(eq(projects.userId, userId));
+  }
+
+  async createProject(project: InsertProject): Promise<Project> {
+    const rows = await this.db.insert(projects).values(project).returning();
+    return rows[0];
+  }
+
+  async updateProject(id: number, projectData: Partial<Project>): Promise<Project | undefined> {
+    const rows = await this.db.update(projects).set(projectData).where(eq(projects.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteProject(id: number): Promise<boolean> {
+    const rows = await this.db.delete(projects).where(eq(projects.id, id)).returning({ id: projects.id });
+    return rows.length > 0;
+  }
+
+  // Event methods
+  async getEvent(id: number): Promise<Event | undefined> {
+    const rows = await this.db.select().from(events).where(eq(events.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getEventByUid(userId: number, uid: string): Promise<Event | undefined> {
+    const rows = await this.db
+      .select()
+      .from(events)
+      .where(and(eq(events.userId, userId), eq(events.uid, uid)))
+      .limit(1);
+    return rows[0];
+  }
+
+  async getEventsByUser(userId: number): Promise<Event[]> {
+    return this.db.select().from(events).where(eq(events.userId, userId));
+  }
+
+  async getEventsByProject(projectId: number): Promise<Event[]> {
+    return this.db.select().from(events).where(eq(events.projectId, projectId));
+  }
+
+  async getEventsByDateRange(userId: number, startDate: Date, endDate: Date): Promise<Event[]> {
+    return this.db
+      .select()
+      .from(events)
+      .where(
+        and(
+          eq(events.userId, userId),
+          gte(events.startDate, startDate),
+          lte(events.startDate, endDate)
+        )
+      );
+  }
+
+  async createEvent(event: InsertEvent): Promise<Event> {
+    const rows = await this.db.insert(events).values(event).returning();
+    return rows[0];
+  }
+
+  async createEvents(eventsToInsert: InsertEvent[]): Promise<Event[]> {
+    if (eventsToInsert.length === 0) return [];
+    return this.db.transaction(async (tx) => {
+      const created: Event[] = [];
+      for (const eventData of eventsToInsert) {
+        const rows = await tx.insert(events).values(eventData).returning();
+        created.push(rows[0]);
+      }
+      return created;
+    });
+  }
+
+  async updateEvent(id: number, eventData: Partial<Event>): Promise<Event | undefined> {
+    const rows = await this.db.update(events).set(eventData).where(eq(events.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteEvent(id: number): Promise<boolean> {
+    const rows = await this.db.delete(events).where(eq(events.id, id)).returning({ id: events.id });
+    return rows.length > 0;
+  }
+
+  // Conversation methods
+  async getConversation(id: number): Promise<Conversation | undefined> {
+    const rows = await this.db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getConversationsByUser(userId: number): Promise<Conversation[]> {
+    return this.db.select().from(conversations).where(eq(conversations.userId, userId));
+  }
+
+  async createConversation(conversation: InsertConversation): Promise<Conversation> {
+    const rows = await this.db.insert(conversations).values(conversation).returning();
+    return rows[0];
+  }
+
+  async updateConversation(id: number, messages: any[]): Promise<Conversation | undefined> {
+    const rows = await this.db.update(conversations).set({ messages }).where(eq(conversations.id, id)).returning();
+    return rows[0];
+  }
+
+  // User file methods
+  async getUserFile(id: number): Promise<UserFile | undefined> {
+    const rows = await this.db.select().from(userFiles).where(eq(userFiles.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getUserFilesByUser(userId: number): Promise<UserFile[]> {
+    return this.db.select().from(userFiles).where(eq(userFiles.userId, userId));
+  }
+
+  async getUserFilesByProject(projectId: number): Promise<UserFile[]> {
+    return this.db.select().from(userFiles).where(eq(userFiles.projectId, projectId));
+  }
+
+  async getUserFilesByType(userId: number, fileType: string): Promise<UserFile[]> {
+    return this.db
+      .select()
+      .from(userFiles)
+      .where(and(eq(userFiles.userId, userId), eq(userFiles.fileType, fileType)));
+  }
+
+  async createUserFile(file: InsertUserFile): Promise<UserFile> {
+    const rows = await this.db.insert(userFiles).values(file).returning();
+    return rows[0];
+  }
+
+  async updateUserFile(id: number, fileData: Partial<UserFile>): Promise<UserFile | undefined> {
+    const rows = await this.db
+      .update(userFiles)
+      .set({ ...fileData, lastAccessed: new Date() })
+      .where(eq(userFiles.id, id))
+      .returning();
+    return rows[0];
+  }
+
+  async deleteUserFile(id: number): Promise<boolean> {
+    const rows = await this.db.delete(userFiles).where(eq(userFiles.id, id)).returning({ id: userFiles.id });
+    return rows.length > 0;
+  }
+
+  // User document methods
+  async getUserDocument(id: number): Promise<UserDocument | undefined> {
+    const rows = await this.db.select().from(userDocuments).where(eq(userDocuments.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getUserDocumentsByUser(userId: number): Promise<UserDocument[]> {
+    return this.db.select().from(userDocuments).where(eq(userDocuments.userId, userId));
+  }
+
+  async getUserDocumentsByProject(projectId: number): Promise<UserDocument[]> {
+    return this.db.select().from(userDocuments).where(eq(userDocuments.projectId, projectId));
+  }
+
+  async getUserDocumentsByType(userId: number, documentType: string): Promise<UserDocument[]> {
+    return this.db
+      .select()
+      .from(userDocuments)
+      .where(and(eq(userDocuments.userId, userId), eq(userDocuments.documentType, documentType)));
+  }
+
+  async createUserDocument(document: InsertUserDocument): Promise<UserDocument> {
+    const rows = await this.db.insert(userDocuments).values(document).returning();
+    return rows[0];
+  }
+
+  async updateUserDocument(id: number, documentData: Partial<UserDocument>): Promise<UserDocument | undefined> {
+    const rows = await this.db
+      .update(userDocuments)
+      .set({ ...documentData, updatedAt: new Date() })
+      .where(eq(userDocuments.id, id))
+      .returning();
+    return rows[0];
+  }
+
+  async deleteUserDocument(id: number): Promise<boolean> {
+    const rows = await this.db.delete(userDocuments).where(eq(userDocuments.id, id)).returning({ id: userDocuments.id });
+    return rows.length > 0;
+  }
+}
+
+// Persistent PostgreSQL storage is the default. In-memory storage exists only
+// for explicitly selected tests or demonstrations via MEM_STORAGE=1.
+export const storage: IStorage =
+  process.env.MEM_STORAGE === "1" ? new MemStorage() : new DbStorage(getDb());
+

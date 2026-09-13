@@ -1,6 +1,7 @@
 /**
  * Weather API service using Open-Meteo (free, reliable, agricultural-focused)
  * Provides current weather and 7-day detailed forecasts for AI agricultural calendar
+ * All values are requested from the provider in US units: °F, mph, inches
  */
 import axios from 'axios';
 import { WeatherForecast } from '@shared/schema';
@@ -8,6 +9,47 @@ import { WeatherForecast } from '@shared/schema';
 // Cache for weather data
 const weatherCache: Record<string, { data: WeatherForecast[], timestamp: number }> = {};
 const CACHE_EXPIRY = 10 * 60 * 1000; // 10 minutes cache
+
+export const WEATHER_UNITS = {
+  temperature: '°F',
+  wind: 'mph',
+  precipitation: 'inches',
+  visibility: 'kilometers',
+} as const;
+
+export interface WeatherResult {
+  locationName: string;
+  fetchedAt: string;
+  forecasts: WeatherForecast[];
+}
+
+// Wire format returned by GET /api/weather
+export interface WeatherResponse {
+  location: string;
+  units: typeof WEATHER_UNITS;
+  fetchedAt: string;
+  current: WeatherForecast;
+  forecast: WeatherForecast[];
+}
+
+// Pure mapping from a fetched weather result to the API wire format.
+export function formatWeatherData(weatherData: {
+  locationName: string;
+  fetchedAt: string;
+  forecasts: WeatherForecast[];
+}): WeatherResponse {
+  const [current, ...forecast] = weatherData.forecasts;
+  if (!current) {
+    throw new Error('No weather data available');
+  }
+  return {
+    location: weatherData.locationName,
+    units: WEATHER_UNITS,
+    fetchedAt: weatherData.fetchedAt,
+    current: { ...current, isCurrent: true },
+    forecast: forecast.map((day: WeatherForecast) => ({ ...day, isCurrent: false }))
+  };
+}
 
 export interface GeocodingResult {
   name: string;
@@ -116,7 +158,7 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
  */
 export async function fetchComprehensiveWeather(
   locationInput: string | { lat: number; lon: number }
-): Promise<{ locationName: string, forecasts: WeatherForecast[] } | null> {
+): Promise<WeatherResult | null> {
   try {
     let lat: number;
     let lon: number;
@@ -127,14 +169,17 @@ export async function fetchComprehensiveWeather(
 
     // Check cache first
     if (weatherCache[cacheKey] && (now - weatherCache[cacheKey].timestamp < CACHE_EXPIRY)) {
-      console.log(`Using cached weather data for ${cacheKey}`);
       const cachedEntry = weatherCache[cacheKey];
       let tempLocationName = cacheKey;
       if (typeof locationInput === 'string') {
         const geocoded = await geocodeLocation(locationInput);
         tempLocationName = geocoded ? geocoded.resolvedName : locationInput;
       }
-      return { locationName: tempLocationName, forecasts: cachedEntry.data };
+      return {
+        locationName: tempLocationName,
+        fetchedAt: new Date(cachedEntry.timestamp).toISOString(),
+        forecasts: cachedEntry.data
+      };
     }
 
     // Get coordinates
@@ -153,7 +198,8 @@ export async function fetchComprehensiveWeather(
       resolvedLocationName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
     }
 
-    // Fetch weather data from Open-Meteo
+    // Fetch weather data from Open-Meteo, explicitly requesting US units so the
+    // provider (not the client) owns the single unit conversion
     const openMeteoUrl = `https://api.open-meteo.com/v1/forecast`;
     const params = {
       latitude: lat,
@@ -161,6 +207,9 @@ export async function fetchComprehensiveWeather(
       current_weather: true,
       daily: 'weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,uv_index_max',
       hourly: 'apparent_temperature,relativehumidity_2m,precipitation,surface_pressure,visibility,uv_index,weathercode',
+      temperature_unit: 'fahrenheit',
+      wind_speed_unit: 'mph',
+      precipitation_unit: 'inch',
       timezone: 'auto',
     };
 
@@ -170,22 +219,24 @@ export async function fetchComprehensiveWeather(
 
     const forecasts: WeatherForecast[] = [];
 
-    // Process current weather
+    // Process current weather. current_weather.time and hourly.time are both in
+    // the provider's local time zone, so match them by string, never by the
+    // server's local clock.
     const cw = apiData.current_weather;
-    const currentHourISO = new Date().toISOString().substring(0, 13) + ":00";
-    let currentHourIndex = apiData.hourly.time.findIndex((t: string) => t === currentHourISO);
-    
+    const providerTime: string = cw.time;
+    const currentHourKey = providerTime.substring(0, 13) + ":00";
+    let currentHourIndex = apiData.hourly.time.indexOf(currentHourKey);
+
     if (currentHourIndex === -1) {
-      const nowMillis = new Date().getTime();
-      currentHourIndex = apiData.hourly.time.reduce((closestIdx: number, t: string, idx: number) => {
-        const timeMillis = new Date(t).getTime();
-        if (timeMillis <= nowMillis) {
-          const closestDiff = Math.abs(nowMillis - new Date(apiData.hourly.time[closestIdx]).getTime());
-          const currentDiff = Math.abs(nowMillis - timeMillis);
-          return currentDiff < closestDiff ? idx : closestIdx;
+      for (let i = apiData.hourly.time.length - 1; i >= 0; i--) {
+        if (apiData.hourly.time[i] <= providerTime) {
+          currentHourIndex = i;
+          break;
         }
-        return closestIdx;
-      }, 0);
+      }
+    }
+    if (currentHourIndex === -1) {
+      currentHourIndex = 0;
     }
 
     const currentHourData = {
@@ -202,7 +253,7 @@ export async function fetchComprehensiveWeather(
 
     // Add current weather to forecasts
     forecasts.push({
-      date: new Date(cw.time).toISOString().split('T')[0],
+      date: providerTime.substring(0, 10),
       dayOfWeek: "Today",
       temperature: parseFloat(cw.temperature.toFixed(1)),
       temp_min: parseFloat(cw.temperature.toFixed(1)),
@@ -211,8 +262,8 @@ export async function fetchComprehensiveWeather(
       weatherDescription: currentWeatherDetails.description,
       icon: currentWeatherDetails.icon,
       wind: parseFloat(cw.windspeed.toFixed(1)),
-      humidity: Math.round(currentHourData.relativehumidity_2m ?? 50),
-      precipitation: parseFloat((currentHourData.precipitation ?? 0).toFixed(1)),
+      humidity: typeof currentHourData.relativehumidity_2m === "number" ? Math.round(currentHourData.relativehumidity_2m) : null,
+      precipitation: parseFloat((currentHourData.precipitation ?? 0).toFixed(2)),
       pressure: currentHourData.surface_pressure ? parseFloat(currentHourData.surface_pressure.toFixed(1)) : undefined,
       visibility: currentHourData.visibility ? parseFloat((currentHourData.visibility / 1000).toFixed(1)) : undefined,
       uv_index: currentHourData.uv_index ? parseFloat(currentHourData.uv_index.toFixed(1)) : undefined,
@@ -236,8 +287,8 @@ export async function fetchComprehensiveWeather(
           weatherDescription: dailyWeatherDetails.description,
           icon: dailyWeatherDetails.icon,
           wind: parseFloat(apiData.daily.windspeed_10m_max[idx].toFixed(1)),
-          humidity: 50,
-          precipitation: parseFloat(apiData.daily.precipitation_sum[idx].toFixed(1)),
+          humidity: null,
+          precipitation: parseFloat(apiData.daily.precipitation_sum[idx].toFixed(2)),
           uv_index: apiData.daily.uv_index_max[idx] ? parseFloat(apiData.daily.uv_index_max[idx].toFixed(1)) : undefined,
           isCurrent: false,
         });
@@ -248,7 +299,11 @@ export async function fetchComprehensiveWeather(
     weatherCache[cacheKey] = { data: forecasts, timestamp: now };
 
     console.log(`Weather data processed for ${resolvedLocationName}`);
-    return { locationName: resolvedLocationName, forecasts };
+    return {
+      locationName: resolvedLocationName,
+      fetchedAt: new Date(now).toISOString(),
+      forecasts
+    };
 
   } catch (error) {
     console.error(`Error fetching or processing weather data:`, error);
@@ -256,50 +311,6 @@ export async function fetchComprehensiveWeather(
       console.error('Axios error details:', error.response?.data);
     }
     return null;
-  }
-}
-
-/**
- * @deprecated Use fetchComprehensiveWeather instead which provides more detailed data
- * Get current weather data for coordinates (legacy function kept for backward compatibility)
- */
-export async function getCurrentWeather(lat: number, lon: number): Promise<any> {
-  try {
-    console.log('Using fetchComprehensiveWeather instead of getCurrentWeather');
-    const result = await fetchComprehensiveWeather({ lat, lon });
-    if (!result || !result.forecasts || result.forecasts.length === 0) {
-      throw new Error('No weather data available');
-    }
-    
-    // Get the current weather forecast and format it in the legacy structure
-    const currentForecast = result.forecasts.find(f => f.isCurrent) || result.forecasts[0];
-    
-    return {
-      name: result.locationName,
-      sys: { country: 'XX' },
-      main: {
-        temp: currentForecast.temperature,
-        feels_like: currentForecast.feels_like,
-        humidity: currentForecast.humidity,
-        pressure: currentForecast.pressure || 1013
-      },
-      wind: { speed: currentForecast.wind },
-      weather: [{ 
-        description: currentForecast.weatherDescription, 
-        icon: currentForecast.icon
-      }]
-    };
-  } catch (error) {
-    console.error('Error in getCurrentWeather:', error);
-    
-    // Return fallback data (temperatures in Celsius for consistency)
-    return {
-      name: `${lat.toFixed(2)},${lon.toFixed(2)}`,
-      sys: { country: 'XX' },
-      main: { temp: 15, feels_like: 15, humidity: 50, pressure: 1013 },
-      wind: { speed: 5 },
-      weather: [{ description: 'clear sky', icon: '☀️' }]
-    };
   }
 }
 
@@ -324,7 +335,7 @@ export function getAgricultureRecommendations(weatherData: {
     recommendations += `**Location:** ${weatherData.locationName}\n`;
     recommendations += `**Current Temperature:** ${current.temperature}°F (feels like ${current.feels_like}°F)\n`;
     recommendations += `**Conditions:** ${current.weatherDescription}\n`;
-    recommendations += `**Humidity:** ${current.humidity}%\n`;
+    recommendations += `**Humidity:** ${current.humidity ?? "unavailable"}\n`;
     recommendations += `**Wind:** ${current.wind} mph\n`;
     recommendations += `**Precipitation:** ${current.precipitation} inches\n\n`;
     
@@ -347,9 +358,9 @@ export function getAgricultureRecommendations(weatherData: {
     }
     
     // Humidity and wind recommendations
-    if (current.humidity < 40) {
+    if (current.humidity !== null && current.humidity < 40) {
       recommendations += `- 💧 **Low Humidity**: Increase watering frequency. Consider mulching to retain moisture.\n`;
-    } else if (current.humidity > 80) {
+    } else if (current.humidity !== null && current.humidity > 80) {
       recommendations += `- 💦 **High Humidity**: Monitor for fungal diseases. Ensure good air circulation.\n`;
     }
     
@@ -416,158 +427,5 @@ export function getAgricultureRecommendations(weatherData: {
   } catch (error) {
     console.error('Error generating agricultural recommendations:', error);
     return 'Unable to generate agricultural recommendations at this time.';
-  }
-}
-
-// Get forecast data directly from coordinates using Open-Meteo API
-export async function getForecast(lat: number, lon: number): Promise<any[] | null> {
-  try {
-    console.log(`Fetching forecast for coordinates: ${lat}, ${lon}`);
-    
-    // Use Open-Meteo API directly with coordinates
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant,uv_index_max&timezone=auto&forecast_days=7`;
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.error(`Open-Meteo API error: ${response.status} ${response.statusText}`);
-      return null;
-    }
-    
-    const data = await response.json();
-    
-    if (!data.daily) {
-      console.error('No daily forecast data received from Open-Meteo');
-      return null;
-    }
-    
-    // Convert Open-Meteo format to our internal format
-    const forecast = data.daily.time.map((date: string, index: number) => {
-      const tempC = data.daily.temperature_2m_max[index];
-      const tempMinC = data.daily.temperature_2m_min[index];
-      const tempF = (tempC * 9/5) + 32;
-      const tempMinF = (tempMinC * 9/5) + 32;
-      
-      return {
-        date: date,
-        dayOfWeek: index === 0 ? 'Today' : new Date(date).toLocaleDateString('en', { weekday: 'long' }),
-        temp: Math.round(tempF),
-        temp_min: Math.round(tempMinF),
-        temp_max: Math.round(tempF),
-        feels_like: Math.round(((data.daily.apparent_temperature_max[index] || tempC) * 9/5) + 32),
-        weather_description: getWeatherDetails(data.daily.weather_code[index] || 0).description,
-        icon: getWeatherDetails(data.daily.weather_code[index] || 0).icon,
-        wind: Math.round((data.daily.wind_speed_10m_max[index] || 0) * 0.621371), // km/h to mph
-        humidity: 50, // Not available in daily data, using reasonable default
-        precipitation: Math.round((data.daily.precipitation_sum[index] || 0) * 0.0393701), // mm to inches
-        pressure: 1013, // Not available, using standard pressure
-        visibility: 10, // Not available, using good visibility
-        uv_index: data.daily.uv_index_max[index] || 0,
-        wind_direction: data.daily.wind_direction_10m_dominant[index] || 0
-      };
-    });
-    
-    console.log(`Successfully fetched ${forecast.length} day forecast for coordinates: ${lat}, ${lon}`);
-    return forecast;
-    
-  } catch (error) {
-    console.error('Error in getForecast:', error);
-    return null;
-  }
-}
-
-/**
- * @deprecated Use fetchComprehensiveWeather instead which provides more detailed and consistent data
- * Get complete weather data (current + forecast) directly from coordinates
- */
-export async function getWeatherFromCoordinates(lat: number, lon: number): Promise<any | null> {
-  try {
-    console.log(`Fetching complete weather data for coordinates: ${lat}, ${lon}`);
-    
-    // Get current weather and forecast in parallel
-    const [currentWeather, forecast] = await Promise.all([
-      getCurrentWeather(lat, lon),
-      getForecast(lat, lon)
-    ]);
-    
-    if (!currentWeather || !forecast) {
-      console.error('Failed to fetch current weather or forecast for coordinates');
-      return null;
-    }
-    
-    console.log('currentWeather object received:', JSON.stringify(currentWeather, null, 2));
-    
-    const tempCelsius = currentWeather.main?.temp || 15; // Default to 15°C if not available
-    const tempFahrenheit = Math.round((tempCelsius * 9/5) + 32);
-    
-    console.log(`Final temperature conversion: ${tempCelsius}°C = ${tempFahrenheit}°F`);
-    
-    // Format the response with weather data
-    const weatherResponse = {
-      location: `${lat.toFixed(6)}, ${lon.toFixed(6)}`,
-      current: {
-        temp: tempFahrenheit,
-        feels_like: Math.round(((currentWeather.main?.feels_like || 15) * 9/5) + 32),
-        temp_min: Math.round(((currentWeather.main?.temp || 15) * 9/5) + 32),
-        temp_max: Math.round(((currentWeather.main?.temp || 15) * 9/5) + 32),
-        humidity: currentWeather.main?.humidity || 50,
-        wind_speed: Math.round((currentWeather.wind?.speed || 0) * 0.621371), // km/h to mph
-        weather_description: currentWeather.weather?.[0]?.description || 'clear sky',
-        icon: currentWeather.weather?.[0]?.icon || '01d',
-        pressure: Math.round(currentWeather.main?.pressure || 1013),
-        visibility: 10, // Default visibility
-        precipitation: 0, // Not available in current weather from Open-Meteo
-        wind_direction: 0, // Not available in this format
-        uv_index: 0 // Not available in current weather
-      },
-      forecast: forecast || []
-    };
-    
-    console.log('Final weather response:', JSON.stringify(weatherResponse, null, 2));
-    
-    console.log(`Successfully fetched complete weather data for coordinates: ${lat}, ${lon}`);
-    return weatherResponse;
-    
-  } catch (error) {
-    console.error('Error in getWeatherFromCoordinates:', error);
-    return null;
-  }
-}
-
-// Convert internal forecast format to WeatherForecast schema type
-function mapToWeatherForecast(forecast: any): WeatherForecast {
-  return {
-    date: forecast.date,
-    dayOfWeek: forecast.dayOfWeek,
-    temperature: forecast.temp,
-    temp_min: forecast.temp_min,
-    temp_max: forecast.temp_max,
-    feels_like: forecast.feels_like,
-    weatherDescription: forecast.weather_description,
-    icon: forecast.icon,
-    wind: forecast.wind,
-    humidity: forecast.humidity,
-    precipitation: forecast.precipitation,
-    pressure: forecast.pressure,
-    visibility: forecast.visibility,
-    uv_index: forecast.uv_index
-  };
-}
-
-// Helper function to get the WeatherForecast objects for client API
-export async function getWeatherForecast(location: string): Promise<WeatherForecast[]> {
-  try {
-    console.log('Using fetchComprehensiveWeather in getWeatherForecast');
-    const result = await fetchComprehensiveWeather(location);
-    if (!result || !result.forecasts) {
-      return [];
-    }
-    
-    // With the new API, we can just return the forecasts directly
-    return result.forecasts;
-    
-    // This code is no longer needed as fetchComprehensiveWeather already returns proper WeatherForecast objects
-  } catch (error) {
-    console.error("Error getting weather forecast:", error);
-    return [];
   }
 }
