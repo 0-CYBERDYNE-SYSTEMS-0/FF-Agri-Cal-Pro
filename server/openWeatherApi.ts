@@ -205,7 +205,7 @@ export async function fetchComprehensiveWeather(
       latitude: lat,
       longitude: lon,
       current_weather: true,
-      daily: 'weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,uv_index_max',
+      daily: 'weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,windspeed_10m_max,uv_index_max',
       hourly: 'apparent_temperature,relativehumidity_2m,precipitation,surface_pressure,visibility,uv_index,weathercode',
       temperature_unit: 'fahrenheit',
       wind_speed_unit: 'mph',
@@ -289,6 +289,9 @@ export async function fetchComprehensiveWeather(
           wind: parseFloat(apiData.daily.windspeed_10m_max[idx].toFixed(1)),
           humidity: null,
           precipitation: parseFloat(apiData.daily.precipitation_sum[idx].toFixed(2)),
+          precipitationProbability: typeof apiData.daily.precipitation_probability_max?.[idx] === "number"
+            ? Math.round(apiData.daily.precipitation_probability_max[idx])
+            : undefined,
           uv_index: apiData.daily.uv_index_max[idx] ? parseFloat(apiData.daily.uv_index_max[idx].toFixed(1)) : undefined,
           isCurrent: false,
         });

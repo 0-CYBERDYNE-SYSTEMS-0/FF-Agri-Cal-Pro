@@ -1,98 +1,105 @@
-/**
- * Utility functions for interacting with the Perplexity.ai API
- */
+// Web research via the Perplexity API.
+//
+// Contract: searchWeb THROWS on any failure (missing key, provider outage,
+// non-2xx response). Callers must surface the failure — research never
+// silently degrades into an error string that looks like a result.
+//
+// Configuration (all optional):
+//   PERPLEXITY_API_KEY     required at call time (throws without it)
+//   PERPLEXITY_MODEL       default "sonar"
+//   PERPLEXITY_MAX_TOKENS  default 2000
+//   PERPLEXITY_RECENCY     optional recency filter (day|week|month|year).
+//                          UNSET by default: evergreen agronomy questions
+//                          ("how to ferment tobacco insecticide", sowing
+//                          depths, maturity days) must not be biased toward
+//                          last month's pages. Set only when a query needs
+//                          fresh results.
 
-interface PerplexitySearchOptions {
-  query: string;
-  max_results?: number;
-  search_mode?: 'fast' | 'full';
+export interface PerplexityCitation {
+  url: string;
+  title?: string;
 }
 
-interface Citation {
-  text: string;
-  url: string;
+export interface WebSearchResult {
+  content: string;
+  citations: PerplexityCitation[];
 }
 
 interface PerplexityResponse {
-  id: string;
-  model: string;
-  object: string;
-  created: number;
-  choices: Array<{
-    index: number;
-    finish_reason: string;
-    message: {
-      role: string;
-      content: string;
+  choices?: Array<{
+    message?: {
+      content?: string;
     };
   }>;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  citations: string[];
+  citations?: string[];
 }
 
-/**
- * Search the web using Perplexity.ai API
- */
-export async function searchWeb(options: PerplexitySearchOptions): Promise<string> {
-  try {
-    const apiKey = process.env.PERPLEXITY_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error('PERPLEXITY_API_KEY environment variable is not set');
-    }
-    
-    // Using the chat/completions endpoint with web search enabled
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: "llama-3.1-sonar-small-128k-online",
-        messages: [
-          {
-            role: "system",
-            content: "You are a helpful assistant focused on providing accurate and up-to-date information. Be precise and concise in your responses."
-          },
-          {
-            role: "user",
-            content: options.query
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.2,
-        search_domain_filter: [],
-        search_recency_filter: "month"
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Perplexity API error: ${response.status} ${errorText}`);
-    }
-    
-    const data = await response.json() as PerplexityResponse;
-    
-    // Get the main content from Perplexity response
-    const searchContent = data.choices[0].message.content;
-    
-    // Format sources/citations
-    let sourcesText = "";
-    if (data.citations && data.citations.length > 0) {
-      sourcesText = "\n\nSources:\n" + data.citations
-        .map((url, index) => `[${index + 1}] ${url}`)
-        .join('\n');
-    }
-    
-    return searchContent + sourcesText;
-  } catch (error: unknown) {
-    console.error('Error searching web with Perplexity:', error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return `Error searching the web: ${errorMessage}`;
+const DEFAULT_MODEL = "sonar";
+const DEFAULT_MAX_TOKENS = 2000;
+
+function intEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function isResearchConfigured(): boolean {
+  return !!process.env.PERPLEXITY_API_KEY;
+}
+
+export async function searchWeb(query: string): Promise<WebSearchResult> {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) {
+    throw new Error("PERPLEXITY_API_KEY is not configured, so web research is unavailable");
   }
+
+  const model = process.env.PERPLEXITY_MODEL || DEFAULT_MODEL;
+  const maxTokens = intEnv("PERPLEXITY_MAX_TOKENS", DEFAULT_MAX_TOKENS);
+
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a research assistant for agricultural planning. Answer precisely and factually. " +
+          "Include practical specifics (timing, quantities, temperatures, durations, rates) when the question involves them. " +
+          "Prefer extension-service, university, and government sources.",
+      },
+      { role: "user", content: query },
+    ],
+    max_tokens: maxTokens,
+    temperature: 0.2,
+  };
+  if (process.env.PERPLEXITY_RECENCY) {
+    body.search_recency_filter = process.env.PERPLEXITY_RECENCY;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch("https://api.perplexity.ai/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Web research request failed: ${message}`);
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`Web research failed: Perplexity API error ${response.status} ${errorText.slice(0, 300)}`);
+  }
+
+  const data = (await response.json()) as PerplexityResponse;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("Web research failed: the provider returned an empty answer");
+  }
+
+  const citations: PerplexityCitation[] = (data.citations ?? []).map(url => ({ url }));
+  return { content, citations };
 }

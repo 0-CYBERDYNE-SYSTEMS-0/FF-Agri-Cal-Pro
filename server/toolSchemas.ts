@@ -58,6 +58,8 @@ export const createEventToolSchema = z.object({
   location: z.string().optional(),
   projectId: z.number().int().optional(),
   checkWeather: z.boolean().optional(),
+  allDay: z.boolean().optional(),
+  recurringPattern: recurringPatternInputSchema.optional(),
 }).strict();
 
 export const updateEventToolSchema = eventUpdateFieldsSchema.extend({

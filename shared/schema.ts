@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, json } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, json, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -93,6 +93,127 @@ export const userDocuments = pgTable("user_documents", {
   updatedAt: timestamp("updated_at").defaultNow().notNull()
 });
 
+// Farm profile — at most one per user; every column except the name is
+// optional so a farm can start empty and grow into the model
+export const farms = pgTable("farms", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().unique().references(() => users.id),
+  name: text("name").notNull(),
+  locationName: text("location_name"),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  timeZone: text("time_zone"),
+  growingZone: text("growing_zone"), // e.g. "Zone 8b"
+  totalAcres: doublePrecision("total_acres"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+});
+
+// Fields / growing areas
+export const fields = pgTable("fields", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  acres: doublePrecision("acres"),
+  soilType: text("soil_type"),
+  currentCrop: text("current_crop"),
+  status: text("status").notNull().default("active"), // active | fallow | retired
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Crop plantings (a crop in the ground or planned)
+export const crops = pgTable("crops", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  fieldId: integer("field_id").references(() => fields.id),
+  name: text("name").notNull(),
+  variety: text("variety"),
+  plantedAt: timestamp("planted_at"),
+  expectedHarvestAt: timestamp("expected_harvest_at"),
+  status: text("status").notNull().default("planning"), // planning | planted | growing | harvested | failed
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Equipment inventory
+export const equipment = pgTable("equipment", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  category: text("category"), // tractor | implement | vehicle | irrigation | tool | other
+  status: text("status").notNull().default("operational"), // operational | maintenance | down
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Buildings and infrastructure
+export const buildings = pgTable("buildings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  category: text("category"), // barn | greenhouse | silo | shed | coop | other
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Staff / labor
+export const staff = pgTable("staff", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  role: text("role"),
+  contact: text("contact"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+// Plans: a researched, approval-gated batch of events. planData holds the
+// PlanPayload from shared/plans.ts (event specs with relative offsets and
+// dependencies); concrete dates are computed at apply time.
+export const plans = pgTable("plans", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  projectId: integer("project_id").references(() => projects.id),
+  title: text("title").notNull(),
+  goal: text("goal").notNull(),
+  status: text("status").notNull().default("draft"), // draft | applied | dismissed
+  planData: json("plan_data").notNull(),
+  sources: json("sources"), // [{ title, url }] from research
+  summary: text("summary"),
+  startDate: timestamp("start_date"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  appliedAt: timestamp("applied_at")
+});
+
+// Proposals: pre-made change sets from the proactive agent, awaiting approval
+export const proposals = pgTable("proposals", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  eventId: integer("event_id").references(() => events.id),
+  type: text("type").notNull(), // weather_risk | conflict | info
+  title: text("title").notNull(),
+  rationale: text("rationale").notNull(),
+  evidence: json("evidence"), // forecast snapshot, overlapping events, etc.
+  changeset: json("changeset"), // [{ eventId, updates: { startDate, endDate, ... } }]
+  status: text("status").notNull().default("pending"), // pending | approved | declined | expired
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  decidedAt: timestamp("decided_at")
+});
+
+// Notifications: inbox entries surfaced by the bell
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  proposalId: integer("proposal_id").references(() => proposals.id),
+  type: text("type").notNull(), // proposal | applied | declined | info
+  title: text("title").notNull(),
+  body: text("body"),
+  read: boolean("read").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
 // Schema validation
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -156,6 +277,94 @@ export const insertUserDocumentSchema = createInsertSchema(userDocuments).pick({
   isPublic: true
 });
 
+export const upsertFarmSchema = createInsertSchema(farms).pick({
+  userId: true,
+  name: true,
+  locationName: true,
+  latitude: true,
+  longitude: true,
+  timeZone: true,
+  growingZone: true,
+  totalAcres: true,
+  notes: true
+});
+
+export const insertFieldSchema = createInsertSchema(fields).pick({
+  userId: true,
+  name: true,
+  acres: true,
+  soilType: true,
+  currentCrop: true,
+  status: true,
+  notes: true
+});
+
+export const insertCropSchema = createInsertSchema(crops).pick({
+  userId: true,
+  fieldId: true,
+  name: true,
+  variety: true,
+  plantedAt: true,
+  expectedHarvestAt: true,
+  status: true,
+  notes: true
+});
+
+export const insertEquipmentSchema = createInsertSchema(equipment).pick({
+  userId: true,
+  name: true,
+  category: true,
+  status: true,
+  notes: true
+});
+
+export const insertBuildingSchema = createInsertSchema(buildings).pick({
+  userId: true,
+  name: true,
+  category: true,
+  notes: true
+});
+
+export const insertStaffSchema = createInsertSchema(staff).pick({
+  userId: true,
+  name: true,
+  role: true,
+  contact: true,
+  notes: true
+});
+
+export const insertPlanSchema = createInsertSchema(plans).pick({
+  userId: true,
+  projectId: true,
+  title: true,
+  goal: true,
+  status: true,
+  planData: true,
+  sources: true,
+  summary: true,
+  startDate: true
+});
+
+export const insertProposalSchema = createInsertSchema(proposals).pick({
+  userId: true,
+  eventId: true,
+  type: true,
+  title: true,
+  rationale: true,
+  evidence: true,
+  changeset: true,
+  status: true
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).pick({
+  userId: true,
+  proposalId: true,
+  type: true,
+  title: true,
+  body: true,
+  read: true
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -175,6 +384,33 @@ export type InsertUserFile = z.infer<typeof insertUserFileSchema>;
 export type UserDocument = typeof userDocuments.$inferSelect;
 export type InsertUserDocument = z.infer<typeof insertUserDocumentSchema>;
 
+export type Farm = typeof farms.$inferSelect;
+export type UpsertFarm = z.infer<typeof upsertFarmSchema>;
+
+export type Field = typeof fields.$inferSelect;
+export type InsertField = z.infer<typeof insertFieldSchema>;
+
+export type Crop = typeof crops.$inferSelect;
+export type InsertCrop = z.infer<typeof insertCropSchema>;
+
+export type Equipment = typeof equipment.$inferSelect;
+export type InsertEquipment = z.infer<typeof insertEquipmentSchema>;
+
+export type Building = typeof buildings.$inferSelect;
+export type InsertBuilding = z.infer<typeof insertBuildingSchema>;
+
+export type StaffMember = typeof staff.$inferSelect;
+export type InsertStaffMember = z.infer<typeof insertStaffSchema>;
+
+export type Plan = typeof plans.$inferSelect;
+export type InsertPlan = z.infer<typeof insertPlanSchema>;
+
+export type Proposal = typeof proposals.$inferSelect;
+export type InsertProposal = z.infer<typeof insertProposalSchema>;
+
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
 // Weather forecast type
 export type WeatherForecast = {
   date: string;
@@ -188,6 +424,7 @@ export type WeatherForecast = {
   wind: number;
   humidity: number | null; // null when the provider does not report it
   precipitation: number;
+  precipitationProbability?: number; // 0-100, when the provider reports it
   pressure?: number; // Air pressure
   visibility?: number; // Visibility in meters
   uv_index?: number; // UV index

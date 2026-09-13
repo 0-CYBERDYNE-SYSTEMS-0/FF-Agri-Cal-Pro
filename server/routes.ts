@@ -549,23 +549,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const formattedData = formatWeatherData(weatherData);
+      // Persist one snapshot per location per day (best-effort): weather
+      // history feeds the proactive agent and later analysis. A cache-write
+      // failure must never break the weather response.
+      storage.upsertWeatherCache(formattedData.location, new Date(), formattedData).catch(err => {
+        console.warn("Weather cache write failed:", err instanceof Error ? err.message : err);
+      });
       return res.status(200).json(formattedData);
     } catch (err) {
       return handleApiError(err, res);
     }
   });
 
-  // Web search route
+  // Web search route — research failures surface as errors, never as results
   app.post("/api/search", requireAuth, async (req: Request, res: Response) => {
+    let query: string;
     try {
-      const { query } = z.object({
-        query: z.string()
-      }).parse(req.body);
-
-      const searchResults = await searchWeb({ query });
-      return res.status(200).json({ results: searchResults });
+      query = z.object({ query: z.string().min(1) }).parse(req.body).query;
     } catch (err) {
       return handleApiError(err, res);
+    }
+    try {
+      const searchResults = await searchWeb(query);
+      return res.status(200).json({ results: searchResults });
+    } catch (err: any) {
+      return res.status(502).json({ message: err.message || "Web search failed" });
     }
   });
 
@@ -640,8 +648,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     switch (toolCall.function.name) {
       case "search_web": {
-        const searchResults = await searchWeb({ query: String(rawArgs.query ?? "") });
-        return { content: JSON.stringify({ success: true, results: searchResults }) };
+        try {
+          const result = await searchWeb(String(rawArgs.query ?? ""));
+          return { content: JSON.stringify({ success: true, content: result.content, citations: result.citations }) };
+        } catch (error: unknown) {
+          return failure(error instanceof Error ? error.message : "Web research failed");
+        }
       }
 
       case "get_weather": {
@@ -673,10 +685,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           endDate: args.data.endDate,
           location: args.data.location ?? null,
           projectId: args.data.projectId ?? null,
-          allDay: false,
+          allDay: args.data.allDay ?? false,
           checkWeather: args.data.checkWeather ?? true,
-          isRecurring: false,
-          recurringPattern: null,
+          isRecurring: !!args.data.recurringPattern,
+          recurringPattern: args.data.recurringPattern
+            ? {
+                frequency: args.data.recurringPattern.frequency,
+                interval: args.data.recurringPattern.interval,
+                endDate: args.data.recurringPattern.endDate instanceof Date
+                  ? args.data.recurringPattern.endDate.toISOString()
+                  : null,
+              }
+            : null,
         });
         return {
           content: JSON.stringify({ success: true, eventId: newEvent.id, event: newEvent }),
@@ -809,6 +829,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!file) {
           return failure("File not found");
         }
+
+        // Only text formats are readable: the upload pipeline stores decoded
+        // text in metadata.content. Binary formats (pdf, xlsx) are not
+        // decodable there and must fail honestly rather than return garbage.
+        const readableTypes = new Set(["csv", "txt", "text", "json", "ics", "md", "log", "xml", "yaml", "yml"]);
+        if (!readableTypes.has(file.fileType.toLowerCase())) {
+          return failure(
+            `Files of type "${file.fileType}" are stored as binary and cannot be read as text. ` +
+            `Export the file as CSV or plain text and upload that instead.`
+          );
+        }
+
+        const metadata = (file.metadata && typeof file.metadata === "object" ? file.metadata : {}) as Record<string, unknown>;
+        const content = typeof metadata.content === "string"
+          ? metadata.content
+          : typeof metadata.rawContent === "string"
+            ? metadata.rawContent
+            : null;
+        if (content === null) {
+          return failure(`No readable text content was stored for "${file.originalName}"`);
+        }
+
+        // Guard what goes back into the model context: 50k chars is already a
+        // very large excerpt; the model can ask follow-ups on the same file.
+        const MAX_FILE_EXCERPT = 50_000;
+        const excerpt = content.length > MAX_FILE_EXCERPT
+          ? content.slice(0, MAX_FILE_EXCERPT) + `\n…[truncated; ${content.length - MAX_FILE_EXCERPT} more characters]`
+          : content;
+
         return {
           content: JSON.stringify({
             success: true,
@@ -819,9 +868,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               size: file.fileSize,
               uploadDate: file.uploadDate,
               description: file.description,
-              metadata: file.metadata
             },
-            content: `File content would be read from: ${file.filePath}`
+            content: excerpt,
           })
         };
       }
@@ -1051,8 +1099,11 @@ For calendar events:
 1. Always include a clear title
 2. Set appropriate start and end times in ISO format (YYYY-MM-DDTHH:MM:SSZ)
 3. Set checkWeather to true for outdoor activities
-4. Include a detailed description with helpful tips
+4. Include a detailed description with helpful tips — descriptions support Markdown, so for task instructions use structure (steps, materials, quantities, safety notes)
 5. Set a location when relevant
+6. Use recurringPattern for repeated activities (weekly scouting, every-3-day watering) instead of many duplicate events
+
+When you use web research (search_web), ground your answer in what it returned and cite the source URLs. If research fails or is unavailable, say so plainly — never present invented specifics as researched facts.
 
 Try to be helpful by suggesting optimal timing for agricultural activities based on the context above. In general advice mode, give advice that does not depend on location-specific weather.`;
 
@@ -1142,6 +1193,20 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
                 checkWeather: {
                   type: "boolean",
                   description: "Whether this event is weather-dependent (default: true for agricultural tasks)"
+                },
+                allDay: {
+                  type: "boolean",
+                  description: "Whether this is an all-day event (no specific start time)"
+                },
+                recurringPattern: {
+                  type: "object",
+                  description: "Make the event recurring (e.g., weekly scouting). Omit for one-time events.",
+                  properties: {
+                    frequency: { type: "string", enum: ["day", "week", "month", "year"], description: "How often it repeats" },
+                    interval: { type: "number", description: "Every N intervals (1 = every week when frequency is week)" },
+                    endDate: { type: "string", description: "ISO date the recurrence ends (optional)" }
+                  },
+                  required: ["frequency", "interval"]
                 }
               },
               required: ["title", "startDate", "endDate"]
