@@ -324,112 +324,7 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     setShowAiSuggestions(false);
   };
   
-  // Function to generate a series of events from an AI plan
-  const handleGenerateEventSeries = async () => {
-    try {
-      setIsLoadingSuggestion(true);
-      
-      // Get the selected project's details
-      const selectedProject = projects.find(p => p.id === parseInt(projectId));
-      
-      // Create a prompt to generate a series of events
-      const prompt = `I need to create a complete calendar for my agricultural project titled "${selectedProject?.name || 'my project'}". ${
-        selectedProject?.description ? `Project overview: ${selectedProject.description}. ` : ''
-      }
-      Starting date: ${startDate}.
-      ${selectedProject?.endDate ? `Ending date: ${new Date(selectedProject.endDate).toISOString().split('T')[0]}.` : ''}
-      ${location ? `Location: ${location}. ` : ''}
-      
-      Please generate a detailed timeline of agricultural events that would be part of this project, including:
-      1. A title for each task or event
-      2. A brief description of each task
-      3. When each task should be scheduled (exact date if possible)
-      4. Approximate duration for each task
-      
-      Format your response as a structured JSON array with fields: title, description, suggestedDate, durationHours`;
-      
-      const suggestion = await getAiSuggestion(prompt);
-      
-      // Try to parse the JSON from the AI response
-      let eventData: any[] = [];
-      try {
-        // Find the JSON part in the response (it might be wrapped in markdown code blocks)
-        const jsonMatch = suggestion.match(/```json\n([\s\S]*?)\n```/) || 
-                          suggestion.match(/```\n([\s\S]*?)\n```/) || 
-                          suggestion.match(/\[([\s\S]*?)\]/);
-        
-        const jsonText = jsonMatch ? jsonMatch[1] : suggestion;
-        eventData = JSON.parse(jsonText.includes('[') ? jsonText : `[${jsonText}]`);
-      } catch (parseError) {
-        console.error("Error parsing AI suggestion:", parseError);
-        toast({
-          title: "Error",
-          description: "Could not parse the AI-generated event plan. Please try again or create events manually.",
-          variant: "destructive",
-        });
-        setAiSuggestion(suggestion);
-        return;
-      }
-      
-      // Create multiple events based on the AI suggestion
-      for (const event of eventData) {
-        if (!event.title) continue;
-        
-        // Calculate start and end times
-        // startDate is a yyyy-MM-dd string; append a time so it parses as local time
-        let startDateTime = new Date(event.suggestedDate || `${startDate}T00:00`);
-        if (isNaN(startDateTime.getTime())) {
-          startDateTime = new Date(`${startDate}T00:00`);
-        }
-        
-        // Set start time to 9 AM if not specified
-        startDateTime.setHours(9, 0, 0, 0);
-        
-        // Calculate end time based on duration (default to 1 hour)
-        const duration = event.durationHours || 1;
-        const endDateTime = new Date(startDateTime);
-        endDateTime.setHours(endDateTime.getHours() + duration);
-        
-        // Create the event
-        const eventData = {
-          title: event.title,
-          description: event.description || "",
-          startDate: startDateTime.toISOString(),
-          endDate: endDateTime.toISOString(),
-          projectId: projectId ? parseInt(projectId) : null,
-          location: location,
-          checkWeather: true,
-          isRecurring: false,
-          recurringPattern: null
-        };
-        
-        // Submit the event
-        try {
-          await eventMutation.mutateAsync(eventData);
-        } catch (error) {
-          console.error("Error creating event:", error);
-        }
-      }
-      
-      toast({
-        title: "Events created",
-        description: `${eventData.length} events have been added to your calendar.`,
-      });
-      
-      onClose();
-    } catch (error) {
-      console.error("Error generating event series:", error);
-      toast({
-        title: "Error",
-        description: "There was an error creating events. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingSuggestion(false);
-    }
-  };
 
-  // Get the currently selected project and its color
   const selectedProject = projects.find(p => p.id === parseInt(projectId));
   const projectColor = selectedProject ? getProjectColor(selectedProject) : null;
 
@@ -666,13 +561,16 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
                 type="button" 
                 variant="outline" 
                 className="flex-1"
-                onClick={handleGenerateEventSeries}
-                disabled={isLoadingSuggestion || !projectId}
+                onClick={() => {
+                  onClose();
+                  window.dispatchEvent(new CustomEvent("open-plan-composer", { detail: { goal: title || "" } }));
+                }}
+                disabled={isLoadingSuggestion}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-primary" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
                 </svg>
-                Generate Calendar
+                Plan This Goal
               </Button>
             </div>
             

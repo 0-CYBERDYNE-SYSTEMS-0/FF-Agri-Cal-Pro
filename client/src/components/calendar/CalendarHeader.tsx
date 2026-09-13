@@ -4,6 +4,7 @@ import { useCalendar } from "@/contexts/CalendarContext";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Upload } from "lucide-react";
+import PlanComposer from "./PlanComposer";
 
 type ViewButtonProps = {
   label: string;
@@ -70,6 +71,7 @@ export default function CalendarHeader() {
           <p className="text-neutral-500">{formatCurrentMonthYear()}</p>
         </div>
         <div className="flex items-center space-x-3">
+          <PlanComposer />
           <div className="flex bg-white rounded-md shadow-sm">
             <ViewButton label="Day" isActive={view === "day"} onClick={() => setView("day")} />
             <ViewButton label="Week" isActive={view === "week"} onClick={() => setView("week")} />

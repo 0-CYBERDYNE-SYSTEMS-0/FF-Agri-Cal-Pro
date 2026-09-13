@@ -69,6 +69,9 @@ export function invalidateMutatedQueries(queryClient: QueryClient, data: ChatRes
   if (mutations.some(m => m.type === "create_document")) {
     queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
   }
+  if (mutations.some(m => m.type === "create_plan")) {
+    queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+  }
 }
 
 export async function getAiSuggestion(prompt: string): Promise<string> {

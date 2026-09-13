@@ -2340,6 +2340,48 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
     }
   });
 
+  // Preview a plan's concrete dates without applying anything
+  app.get("/api/plans/:id/preview", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await ownedOr404(req, res, () => storage.getPlan(id));
+      if (!plan) return;
+
+      const payload = plan.planData as import("@shared/plans").PlanPayload;
+      const validated = planPayloadSchema.safeParse(payload);
+      if (!validated.success) {
+        return res.status(422).json({ message: "Stored plan data no longer matches the plan schema" });
+      }
+
+      const anchor = plan.startDate ?? new Date();
+      try {
+        const resolved = resolvePlanEvents(validated.data, anchor);
+        return res.status(200).json({
+          anchorDate: anchor.toISOString(),
+          events: resolved.map(event => ({
+            index: event.index,
+            title: event.spec.title,
+            description: event.spec.description,
+            startDate: event.startDate.toISOString(),
+            endDate: event.endDate.toISOString(),
+            dependsOnIndex: event.spec.dependsOnIndex ?? null,
+            offsetDays: event.spec.offsetDays,
+            location: event.spec.location ?? null,
+            checkWeather: event.spec.checkWeather ?? true,
+            recurring: event.spec.recurring ?? null,
+          })),
+        });
+      } catch (error) {
+        if (error instanceof PlanResolutionError) {
+          return res.status(422).json({ message: `Plan cannot be resolved: ${error.message}` });
+        }
+        throw error;
+      }
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
   // Apply a plan: resolve concrete dates and create every event in one
   // transaction. Idempotence guard: a plan can only be applied once.
   app.post("/api/plans/:id/apply", requireAuth, async (req: Request, res: Response) => {

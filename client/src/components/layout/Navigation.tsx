@@ -39,6 +39,12 @@ export default function Navigation() {
         <NavLink href="/weather" active={location === "/weather"}>
           Weather
         </NavLink>
+        <NavLink href="/farm" active={location === "/farm"}>
+          Farm
+        </NavLink>
+        <NavLink href="/documents" active={location === "/documents"}>
+          Documents
+        </NavLink>
         <NavLink href="/files" active={location === "/files"}>
           Files
         </NavLink>

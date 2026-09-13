@@ -6,6 +6,8 @@ import Assistant from "@/pages/Assistant";
 import Weather from "@/pages/Weather";
 import Files from "@/pages/Files";
 import Login from "@/pages/Login";
+import Farm from "@/pages/Farm";
+import Documents from "@/pages/Documents";
 import Header from "@/components/layout/Header";
 import { useAuth } from "./contexts/AuthContext";
 import { Suspense } from "react";
@@ -20,6 +22,8 @@ function Router() {
       <Route path="/assistant" component={Assistant} />
       <Route path="/weather" component={Weather} />
       <Route path="/files" component={Files} />
+      <Route path="/farm" component={Farm} />
+      <Route path="/documents" component={Documents} />
       <Route component={NotFound} />
     </Switch>
   );
