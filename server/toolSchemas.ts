@@ -5,6 +5,7 @@
 // ownership (userId) or internal IDs (id, eventId outside tools) are rejected
 // with a validation error instead of being applied.
 import { z } from "zod";
+import { planPayloadSchema } from "@shared/plans";
 
 // A real date or a parseable date string. Explicitly NOT z.coerce.date():
 // that coerces null to the epoch (new Date(null) is 1970-01-01), silently
@@ -217,3 +218,14 @@ export const createStaffRouteSchema = z.object({
 }).strict();
 
 export const updateStaffRouteSchema = createStaffRouteSchema.partial().strict();
+
+// Chat-side plan drafts: the assistant submits a batch of event specs
+// (relative offsets + dependencies) instead of writing events directly.
+// Concrete dates are computed only when the farmer approves the plan.
+export const createPlanDraftToolSchema = z.object({
+  title: z.string().min(1),
+  goal: z.string().min(1),
+  startDate: dateValue,
+  projectId: z.number().int().nullable().optional(),
+  payload: planPayloadSchema,
+}).strict();

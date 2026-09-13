@@ -36,8 +36,61 @@ import {
   updateBuildingRouteSchema,
   createStaffRouteSchema,
   updateStaffRouteSchema,
+  createPlanDraftToolSchema,
 } from "./toolSchemas";
 import { buildFarmContextLines } from "./farmContext";
+import { resolvePlanEvents, planPayloadSchema, PlanResolutionError } from "@shared/plans";
+import { draftPlan, PlanGenerationError } from "./planGenerator";
+import type { PlanEventSpec } from "@shared/plans";
+
+// Parses an anchor date for plans: a date-only string ("YYYY-MM-DD") is
+// interpreted as a LOCAL calendar day — the JS default (UTC midnight) would
+// shift the day backwards in timezones behind UTC. Full ISO strings and Date
+// objects pass through as instants.
+function parseAnchorDate(value: unknown): Date {
+  if (value instanceof Date) return value;
+  const match = typeof value === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim()) : null;
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  const parsed = new Date(value as string);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid anchor date: ${String(value)}`);
+  }
+  return parsed;
+}
+
+const anchorDateSchema = z.union([z.date(), z.string()]).transform(parseAnchorDate);
+
+// Converts a validated plan event spec into a storable event row relative to
+// its resolved start/end dates.
+function planSpecToInsertEvent(
+  userId: number,
+  projectId: number | null,
+  spec: PlanEventSpec,
+  startDate: Date,
+  endDate: Date
+): InsertEvent {
+  return {
+    userId,
+    projectId,
+    title: spec.title,
+    description: spec.description || null,
+    startDate,
+    endDate,
+    allDay: false,
+    location: spec.location ?? null,
+    checkWeather: spec.checkWeather ?? true,
+    isRecurring: !!spec.recurring,
+    recurringPattern: spec.recurring
+      ? {
+          frequency: spec.recurring.frequency,
+          interval: spec.recurring.interval,
+          endDate: spec.recurring.endDate ?? null,
+        }
+      : null,
+  };
+}
 
 // Helper function to determine the current season based on date and hemisphere
 function getSeasonForDate(date: Date, northernHemisphere: boolean): string {
@@ -990,6 +1043,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }
 
+      case "create_plan_draft": {
+        const args = createPlanDraftToolSchema.safeParse(rawArgs);
+        if (!args.success) {
+          return failure(`Invalid plan arguments: ${fromZodError(args.error).message}`);
+        }
+        if (args.data.projectId !== undefined && args.data.projectId !== null) {
+          const projectError = await ownedProjectOrError(userId, args.data.projectId);
+          if (projectError) return failure(projectError);
+        }
+        // Dependency ordering was already validated by the payload schema
+        try {
+          resolvePlanEvents(args.data.payload, args.data.startDate);
+        } catch (error) {
+          if (error instanceof PlanResolutionError) {
+            return failure(`Plan cannot be resolved: ${error.message}`);
+          }
+          throw error;
+        }
+        const newPlan = await storage.createPlan({
+          userId,
+          projectId: args.data.projectId ?? null,
+          title: args.data.title,
+          goal: args.data.goal,
+          status: "draft",
+          planData: args.data.payload,
+          sources: args.data.payload.sources,
+          summary: args.data.payload.summary,
+          startDate: args.data.startDate,
+        });
+        return {
+          content: JSON.stringify({
+            success: true,
+            planId: newPlan.id,
+            eventCount: args.data.payload.events.length,
+            note: "A draft plan was saved. The farmer must review and apply it from the Plan Composer — no events were written to the calendar.",
+          }),
+          mutation: { type: "create_plan", id: newPlan.id, ok: true },
+        };
+      }
+
       default:
         return failure(`Unknown tool "${toolCall.function.name}"`);
     }
@@ -1112,6 +1205,7 @@ CALENDAR MANAGEMENT CAPABILITIES:
 - You can delete events with delete_calendar_event
 - You can search for events with search_calendar_events (by keyword, date range, or project)
 - You can organize events into projects with get_or_create_project
+- For multi-step GOALS (a season garden, a crop cycle, a multi-week process), save a plan draft with create_plan_draft — the farmer reviews and applies it from the Plan Composer. Only use create_calendar_event for one or two simple, immediate events.
 
 CRITICAL: When the user asks you to schedule an event, you MUST ALWAYS use the create_calendar_event function. NEVER respond as if you've scheduled something without explicitly calling this function.
 
@@ -1424,6 +1518,80 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
                 }
               },
               required: ["title", "content"]
+            }
+          }
+        },
+        {
+          type: "function" as const,
+          function: {
+            name: "create_plan_draft",
+            description: "Save a multi-event PLAN DRAFT for a goal that needs many coordinated, timed activities (a season garden, a fermentation process, a crop cycle). Events use relative day offsets and optional dependency chains instead of absolute dates; the farmer reviews and applies the draft from the Plan Composer, which writes the calendar events. Use this instead of many create_calendar_event calls when the request is a plan. Do NOT use it for one or two simple events.",
+            parameters: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Short plan title, e.g. 'Fall Vegetable Garden'"
+                },
+                goal: {
+                  type: "string",
+                  description: "The farmer's goal this plan achieves"
+                },
+                startDate: {
+                  type: "string",
+                  description: "The anchor date (day 0) in ISO format YYYY-MM-DD; offsets count from here"
+                },
+                projectId: {
+                  type: "number",
+                  description: "Optional project ID to group the plan's events under"
+                },
+                payload: {
+                  type: "object",
+                  description: "The plan itself",
+                  properties: {
+                    events: {
+                      type: "array",
+                      description: "Ordered plan events; dependsOnIndex (must be a LOWER index) chains biology-driven steps",
+                      items: {
+                        type: "object",
+                        properties: {
+                          title: { type: "string" },
+                          description: { type: "string", description: "Markdown SOP: steps, materials, rates, safety" },
+                          offsetDays: { type: "number", description: "Days after the anchor (or after the dependency's day)" },
+                          dependsOnIndex: { type: "number", description: "0-based index of the event this follows; omit to anchor to plan start" },
+                          durationHours: { type: "number" },
+                          timeOfDay: { type: "string", description: "HH:MM 24h local start time" },
+                          location: { type: "string" },
+                          checkWeather: { type: "boolean" },
+                          recurring: {
+                            type: "object",
+                            description: "For repeated care tasks instead of duplicate events",
+                            properties: {
+                              frequency: { type: "string", enum: ["day", "week", "month", "year"] },
+                              interval: { type: "number" },
+                              endDate: { type: "string" }
+                            },
+                            required: ["frequency", "interval"]
+                          }
+                        },
+                        required: ["title", "offsetDays"]
+                      }
+                    },
+                    sources: {
+                      type: "array",
+                      description: "Research source URLs backing the plan",
+                      items: {
+                        type: "object",
+                        properties: { title: { type: "string" }, url: { type: "string" } },
+                        required: ["url"]
+                      }
+                    },
+                    summary: { type: "string", description: "2-6 sentence overview of approach and key timing decisions" }
+                  },
+                  required: ["events"]
+                }
+              },
+              required: ["title", "goal", "startDate", "payload"]
             }
           }
         },
@@ -2077,6 +2245,166 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
 
       await storage.deleteStaffMember(id);
       return res.status(204).end();
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Plan routes — researched, approval-gated event batches (Pillar 2).
+  // Generation writes NOTHING to the calendar: it stores a draft the farmer
+  // reviews before applying.
+
+  // Research a goal and compose a plan draft
+  app.post("/api/plans/generate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const body = z.object({
+        goal: z.string().trim().min(3).max(2000),
+        startDate: anchorDateSchema.optional(),
+        // Optional explicit location; falls back to the farm profile's location
+        location: z.string().trim().min(1).max(200).optional(),
+        projectId: z.number().int().nullable().optional(),
+      }).parse(req.body);
+
+      if (body.projectId !== undefined && body.projectId !== null) {
+        const projectError = await ownedProjectOrError(userId, body.projectId);
+        if (projectError) {
+          return res.status(400).json({ message: projectError });
+        }
+      }
+
+      // Resolve planning location: explicit body location > farm profile location
+      let resolvedLocation: { name: string; lat: number; lon: number } | null = null;
+      const locationQuery = body.location ?? (await storage.getFarmByUser(userId))?.locationName ?? null;
+      if (locationQuery) {
+        const geocoded = await geocodeLocation(locationQuery);
+        if (geocoded) {
+          resolvedLocation = { name: geocoded.resolvedName, lat: geocoded.lat, lon: geocoded.lon };
+        }
+      }
+
+      const farmContextLines = await buildFarmContextLines(userId, storage);
+      const startDate = body.startDate ?? new Date();
+
+      let draft;
+      try {
+        draft = await draftPlan({
+          goal: body.goal,
+          startDate,
+          timeZone: (await storage.getFarmByUser(userId))?.timeZone || "UTC",
+          location: resolvedLocation,
+          farmContextLines,
+        });
+      } catch (error) {
+        // Any failure inside generation (missing key, model outage, no valid
+        // submission) is an upstream failure: report it, save nothing.
+        const message = error instanceof Error ? error.message : "Plan generation failed";
+        return res.status(502).json({ message });
+      }
+
+      const plan = await storage.createPlan({
+        userId,
+        projectId: body.projectId ?? null,
+        title: draft.title,
+        goal: body.goal,
+        status: "draft",
+        planData: draft.payload,
+        sources: draft.payload.sources,
+        summary: draft.payload.summary,
+        startDate,
+      });
+
+      return res.status(201).json(plan);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/plans", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const plans = await storage.getPlansByUser(getUserId(req));
+      return res.status(200).json(plans);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.get("/api/plans/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await ownedOr404(req, res, () => storage.getPlan(id));
+      if (!plan) return;
+      return res.status(200).json(plan);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Apply a plan: resolve concrete dates and create every event in one
+  // transaction. Idempotence guard: a plan can only be applied once.
+  app.post("/api/plans/:id/apply", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await ownedOr404(req, res, () => storage.getPlan(id));
+      if (!plan) return;
+
+      if (plan.status === "applied") {
+        return res.status(409).json({ message: "This plan was already applied" });
+      }
+      if (plan.status === "dismissed") {
+        return res.status(409).json({ message: "This plan was dismissed and cannot be applied" });
+      }
+
+      const body = z.object({
+        startDate: anchorDateSchema.optional(),
+      }).parse(req.body ?? {});
+      const anchor = body.startDate ?? plan.startDate ?? new Date();
+
+      const payload = plan.planData as import("@shared/plans").PlanPayload;
+      const validated = planPayloadSchema.safeParse(payload);
+      if (!validated.success) {
+        return res.status(422).json({ message: "Stored plan data no longer matches the plan schema" });
+      }
+
+      let resolved;
+      try {
+        resolved = resolvePlanEvents(validated.data, anchor);
+      } catch (error) {
+        if (error instanceof PlanResolutionError) {
+          return res.status(422).json({ message: `Plan cannot be resolved: ${error.message}` });
+        }
+        throw error;
+      }
+
+      const eventsToInsert = resolved.map(event =>
+        planSpecToInsertEvent(getUserId(req), plan.projectId, event.spec, event.startDate, event.endDate)
+      );
+      const createdEvents = await storage.createEvents(eventsToInsert);
+
+      const updated = await storage.updatePlan(id, {
+        status: "applied",
+        appliedAt: new Date(),
+        startDate: anchor,
+      });
+
+      return res.status(200).json({ plan: updated, events: createdEvents });
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  app.post("/api/plans/:id/dismiss", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await ownedOr404(req, res, () => storage.getPlan(id));
+      if (!plan) return;
+
+      if (plan.status === "applied") {
+        return res.status(409).json({ message: "An applied plan cannot be dismissed" });
+      }
+
+      const updated = await storage.updatePlan(id, { status: "dismissed" });
+      return res.status(200).json(updated);
     } catch (err) {
       return handleApiError(err, res);
     }
