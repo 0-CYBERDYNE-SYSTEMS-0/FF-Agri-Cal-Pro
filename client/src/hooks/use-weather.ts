@@ -18,6 +18,27 @@ export interface WeatherResponse {
 
 const COORD_PATTERN = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
 
+// The location service caches the validated location (with coordinates) that
+// userLocation was resolved to; coordinates give the API more precision than
+// a repeated place-name lookup
+function validatedCoordinates(): { lat: number; lon: number } | null {
+  try {
+    const raw = localStorage.getItem("validatedLocation");
+    if (!raw) return null;
+    const validated = JSON.parse(raw);
+    if (
+      validated?.coordinates &&
+      typeof validated.coordinates.lat === "number" &&
+      typeof validated.coordinates.lon === "number"
+    ) {
+      return { lat: validated.coordinates.lat, lon: validated.coordinates.lon };
+    }
+  } catch {
+    // Malformed cache entry — fall back to the location string
+  }
+  return null;
+}
+
 export function useWeather(location?: string) {
   // Get an effective location to use
   const getEffectiveLocation = () => {
@@ -44,7 +65,12 @@ export function useWeather(location?: string) {
       }
 
       let params: Record<string, string | number>;
-      if (COORD_PATTERN.test(effectiveLocation)) {
+      // An explicit request wins; when falling back to the saved location,
+      // prefer the coordinates it was validated to for accuracy
+      const coords = location && location.trim() ? null : validatedCoordinates();
+      if (coords) {
+        params = { lat: coords.lat, lon: coords.lon };
+      } else if (COORD_PATTERN.test(effectiveLocation)) {
         const [lat, lon] = effectiveLocation.split(',').map(x => parseFloat(x.trim()));
         params = { lat, lon };
       } else {
@@ -70,6 +96,7 @@ export function useWeather(location?: string) {
     units: data?.units ?? null,
     fetchedAt: data?.fetchedAt ?? null,
     resolvedLocation: data?.location ?? null,
+    resolvedLocationName: data?.location ?? effectiveLocation,
     isLoading,
     error: error ? (error as Error).message : null,
     hasLocation: !!effectiveLocation,

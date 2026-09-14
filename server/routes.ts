@@ -7,7 +7,7 @@ import { insertUserSchema, insertProjectSchema, insertEventSchema, insertConvers
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { searchWeb } from "./perplexityApi";
-import { fetchComprehensiveWeather, getAgricultureRecommendations, geocodeLocation, formatWeatherData, WeatherResponse } from "./openWeatherApi";
+import { fetchComprehensiveWeather, getAgricultureRecommendations, geocodeLocation, reverseGeocodeCoordinates, formatWeatherData, WeatherResponse } from "./openWeatherApi";
 import { expandRecurringEvents, RecurringPattern } from "@shared/recurrence";
 import { parseICS, planImport, serializeICS } from "@shared/ics";
 import { CHAT_MODEL, TOOL_LOOP_LIMIT, createChatClient } from "./modelConfig";
@@ -630,6 +630,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn("Weather cache write failed:", err instanceof Error ? err.message : err);
       });
       return res.status(200).json(formattedData);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Geocoding endpoint for resolving place names to coordinates
+  app.get("/api/geocode", async (req: Request, res: Response) => {
+    try {
+      const location = (req.query.location as string | undefined)?.trim();
+
+      if (!location) {
+        return res.status(400).json({ message: "Location query parameter is required" });
+      }
+
+      const result = await geocodeLocation(location);
+
+      if (!result) {
+        return res.status(404).json({
+          message: "Could not geocode location. Try a more specific place name (e.g., 'Norwich, England').",
+          location,
+        });
+      }
+
+      return res.status(200).json(result);
+    } catch (err) {
+      return handleApiError(err, res);
+    }
+  });
+
+  // Reverse geocoding endpoint for the client location service
+  app.get("/api/reverse-geocode", async (req: Request, res: Response) => {
+    try {
+      const lat = parseFloat(req.query.lat as string);
+      const lon = parseFloat(req.query.lon as string);
+
+      if (isNaN(lat) || isNaN(lon)) {
+        return res.status(400).json({ message: "Valid latitude and longitude required" });
+      }
+
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        return res.status(400).json({ message: "Coordinates out of valid range" });
+      }
+
+      const result = await reverseGeocodeCoordinates(lat, lon);
+
+      if (!result) {
+        return res.status(404).json({
+          message: "Could not reverse geocode coordinates",
+          name: `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+        });
+      }
+
+      return res.status(200).json(result);
     } catch (err) {
       return handleApiError(err, res);
     }

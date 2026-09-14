@@ -20,11 +20,11 @@ import EventModal from "@/components/calendar/EventModal";
 export default function Calendar() {
   const { view } = useCalendar();
   const [_, setLocation] = useLocation();
-  const { requestLocationPermission, location } = useLoc();
-  const [locationRequested, setLocationRequested] = useState(false);
+  const { requestLocationPermission, location, isLoading: isLocationLoading, error: locationError, hasRequestedPermission, setLocation: setUserLocation } = useLoc();
   const { user } = useAuth();
   const [quickEventDate, setQuickEventDate] = useState<Date | null>(null);
   const [isQuickModalOpen, setIsQuickModalOpen] = useState(false);
+  const [manualLocationInput, setManualLocationInput] = useState(location || "");
 
   // The header "New Event" button dispatches this custom event; the listener
   // lives here so the button works in every view, not just the month grid.
@@ -39,7 +39,12 @@ export default function Calendar() {
 
   const handleGetLocation = () => {
     requestLocationPermission();
-    setLocationRequested(true);
+  };
+
+  const handleManualLocationSave = async () => {
+    const trimmed = manualLocationInput.trim();
+    if (!trimmed) return;
+    await setUserLocation(trimmed);
   };
 
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
@@ -48,7 +53,7 @@ export default function Calendar() {
   });
 
   // Use the useWeather hook which properly handles location updates
-  const { weatherData, isLoading: isLoadingWeather } = useWeather(location || undefined);
+  const { weatherData, isLoading: isLoadingWeather, resolvedLocationName } = useWeather(location || undefined);
 
   // Render the appropriate calendar view based on the current view state
   const calendarView = (() => {
@@ -105,16 +110,47 @@ export default function Calendar() {
   const renderWeather = () => (
     <div className="h-full">
       <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
-      {!locationRequested && (
-        <div className="mb-4 flex justify-center">
-          <Button onClick={handleGetLocation} size="sm">Get Location</Button>
+      <div className="mb-4 flex flex-col items-center">
+        <Button
+          onClick={handleGetLocation}
+          size="sm"
+          disabled={isLocationLoading}
+        >
+          {isLocationLoading
+            ? "Getting Location..."
+            : hasRequestedPermission
+              ? "Retry Location"
+              : "Get Location"}
+        </Button>
+        {locationError && (
+          <p className="mt-2 text-xs text-red-500 text-center">
+            {locationError}
+          </p>
+        )}
+        <div className="mt-3 w-full px-2">
+          <input
+            type="text"
+            value={manualLocationInput}
+            onChange={(e) => setManualLocationInput(e.target.value)}
+            placeholder="Enter city, town, or lat,lon"
+            className="w-full rounded border border-neutral-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button
+            type="button"
+            onClick={handleManualLocationSave}
+            className="mt-2 w-full rounded bg-primary px-2 py-1 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+            disabled={isLocationLoading}
+          >
+            Use This Location
+          </button>
         </div>
-      )}
+      </div>
       <div className="max-h-[calc(100vh-10rem)] overflow-y-auto pr-2 pb-2">
         <WeatherRow
           forecasts={weatherData}
           isLoading={isLoadingWeather}
           location={location}
+          resolvedLocationName={resolvedLocationName}
           vertical={true} // New prop for vertical layout
         />
       </div>
@@ -179,11 +215,40 @@ export default function Calendar() {
 
         <div>
           <h2 className="text-lg font-serif font-bold text-neutral-900 mb-4">Weather Forecast</h2>
-          {!locationRequested && (
-            <div className="mb-4 flex justify-center">
-              <Button onClick={handleGetLocation}>Get Location</Button>
+          <div className="mb-4 flex flex-col items-center">
+            <Button
+              onClick={handleGetLocation}
+              disabled={isLocationLoading}
+            >
+              {isLocationLoading
+                ? "Getting Location..."
+                : hasRequestedPermission
+                  ? "Retry Location"
+                  : "Get Location"}
+            </Button>
+            {locationError && (
+              <p className="mt-2 text-xs text-red-500 text-center">
+                {locationError}
+              </p>
+            )}
+            <div className="mt-3 w-full px-2">
+              <input
+                type="text"
+                value={manualLocationInput}
+                onChange={(e) => setManualLocationInput(e.target.value)}
+                placeholder="Enter city, town, or lat,lon"
+                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                type="button"
+                onClick={handleManualLocationSave}
+                className="mt-2 w-full rounded bg-primary px-2 py-1 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+                disabled={isLocationLoading}
+              >
+                Use This Location
+              </button>
             </div>
-          )}
+          </div>
           <div className="max-h-[70vh] overflow-y-auto pr-2 pb-2">
             <WeatherRow
               forecasts={weatherData}
