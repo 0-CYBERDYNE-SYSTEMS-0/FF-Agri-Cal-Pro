@@ -5,9 +5,12 @@ import Projects from "@/pages/Projects";
 import Assistant from "@/pages/Assistant";
 import Weather from "@/pages/Weather";
 import Files from "@/pages/Files";
+import Login from "@/pages/Login";
+import Farm from "@/pages/Farm";
+import Documents from "@/pages/Documents";
 import Header from "@/components/layout/Header";
 import { useAuth } from "./contexts/AuthContext";
-import { useEffect, Suspense } from "react";
+import { Suspense } from "react";
 import ChatInterface from "./components/assistant/ChatInterface";
 import { Loader2 } from "lucide-react";
 
@@ -19,20 +22,15 @@ function Router() {
       <Route path="/assistant" component={Assistant} />
       <Route path="/weather" component={Weather} />
       <Route path="/files" component={Files} />
+      <Route path="/farm" component={Farm} />
+      <Route path="/documents" component={Documents} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
 function App() {
-  const { login, user } = useAuth();
-
-  useEffect(() => {
-    // Auto-login with demo user for simplicity
-    if (!user) {
-      login("demo", "password123");
-    }
-  }, [login, user]);
+  const { user, isLoading } = useAuth();
 
   return (
     <Suspense fallback={
@@ -43,11 +41,21 @@ function App() {
       <div className="flex flex-col h-screen">
         <Header />
         <main className="flex-1 overflow-auto">
-          <div className="w-full mx-auto px-2 sm:px-4 md:px-6 py-4 max-w-[1600px]">
-            <Router />
-          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : user ? (
+            <div className="w-full mx-auto px-2 sm:px-4 md:px-6 py-4 max-w-[1600px]">
+              <Router />
+            </div>
+          ) : (
+            <div className="w-full mx-auto px-2 sm:px-4 md:px-6 py-4 max-w-[1600px]">
+              <Login />
+            </div>
+          )}
         </main>
-        <ChatInterface />
+        {user && <ChatInterface />}
       </div>
     </Suspense>
   );

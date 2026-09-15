@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { WeatherForecast } from "@shared/schema";
-import { getWeatherIcon, getLocationName, getWeatherRecommendation, getLocationStatus } from "@/lib/openWeatherApi";
+import { getLocationName, getWeatherRecommendation, getLocationStatus } from "@/lib/openWeatherApi";
 import WeatherRow from "@/components/weather/WeatherRow";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,6 +12,7 @@ import { Event } from "@shared/schema";
 import { formatDate, isSameDay } from "@/lib/calendarUtils";
 import { useLocation } from "@/contexts/LocationContext";
 import { useWeather } from "@/hooks/use-weather";
+import { useAuth } from "@/contexts/AuthContext";
 import { MapPin, AlertCircle, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -21,6 +22,7 @@ export default function Weather() {
   const [showCustomLocationDialog, setShowCustomLocationDialog] = useState(false);
   const [customLocationInput, setCustomLocationInput] = useState("");
   const { location: userLocation, requestLocationPermission, isLoading: locationLoading, error: locationError, hasRequestedPermission } = useLocation();
+  const { user } = useAuth();
   
   // Use user's location when available
   useEffect(() => {
@@ -36,18 +38,19 @@ export default function Weather() {
   const { weatherData, isLoading: isLoadingWeather, error, hasLocation, location: effectiveLocation, resolvedLocationName } = useWeather(locationToUse || undefined);
   
   const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+    queryKey: ["/api/events", user?.id],
     queryFn: async () => {
       const response = await fetch("/api/events?checkWeather=true", {
         credentials: "include",
       });
-      
+
       if (!response.ok) {
         throw new Error("Failed to fetch events");
       }
-      
+
       return response.json();
-    }
+    },
+    enabled: !!user
   });
   
   // Filter events that have the checkWeather flag enabled
@@ -235,11 +238,11 @@ export default function Weather() {
                 </p>
                 <p className="text-sm flex justify-between">
                   <span>Humidity:</span>
-                  <span className="font-medium">{todayForecast.humidity}%</span>
+                  <span className="font-medium">{todayForecast.humidity ?? "N/A"}</span>
                 </p>
                 <p className="text-sm flex justify-between">
                   <span>Precipitation:</span>
-                  <span className="font-medium">{todayForecast.precipitation}%</span>
+                  <span className="font-medium">{todayForecast.precipitation} in</span>
                 </p>
               </div>
             </CardContent>
@@ -310,7 +313,7 @@ export default function Weather() {
                     
                     <CardContent className="flex-1 p-4">
                       <h3 className="text-sm font-medium mb-2">
-                        {formatDate(new Date(forecast.date), { weekday: 'long', month: 'short', day: 'numeric' })}
+                        {formatDate(new Date(`${forecast.date}T00:00:00`), { weekday: 'long', month: 'short', day: 'numeric' })}
                       </h3>
                       
                       <div className="space-y-2">

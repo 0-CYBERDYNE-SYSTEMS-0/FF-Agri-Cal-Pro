@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { Event, WeatherForecast } from "@shared/schema";
 import {
   getCalendarDays,
   isSameMonth,
@@ -8,6 +6,8 @@ import {
 } from "@/lib/calendarUtils";
 import { useState, useEffect } from "react";
 import { useCalendar } from "@/contexts/CalendarContext";
+import { ExpandedEvent } from "@/lib/calendarUtils";
+import { Event, WeatherForecast } from "@shared/schema";
 import EventModal from "./EventModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getProjectColor } from "@/lib/colorUtils";
@@ -15,7 +15,7 @@ import { getProjectColor } from "@/lib/colorUtils";
 interface CalendarDayProps {
   day: Date;
   currentMonth: number;
-  events: Event[];
+  events: ExpandedEvent[];
   weatherData: WeatherForecast[] | undefined;
   onClick: () => void;
   onEventClick: (eventId: number) => void;
@@ -39,7 +39,7 @@ function CalendarDay({
 
   // Find weather data for this day if available
   const weather = weatherData?.find((forecast) => {
-    const forecastDate = new Date(forecast.date);
+    const forecastDate = new Date(`${forecast.date}T00:00:00`);
     return (
       forecastDate.getDate() === day.getDate() &&
       forecastDate.getMonth() === day.getMonth() &&
@@ -98,11 +98,7 @@ export default function MonthView({ weatherData }: MonthViewProps) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<number | undefined>(undefined);
-  const { currentDate } = useCalendar();
-
-  const { data: events = [], isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
-  });
+  const { currentDate, events, isLoading } = useCalendar();
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -123,21 +119,8 @@ export default function MonthView({ weatherData }: MonthViewProps) {
     }
   };
 
-  // Listen for custom events to open the modal from elsewhere
-  useEffect(() => {
-    const handleOpenModal = () => {
-      console.log("Received open-event-modal event");
-      setSelectedDate(new Date());
-      setSelectedEventId(undefined);
-      setIsModalOpen(true);
-    };
-
-    window.addEventListener('open-event-modal', handleOpenModal);
-    
-    return () => {
-      window.removeEventListener('open-event-modal', handleOpenModal);
-    };
-  }, []);
+  // Note: the "New Event" header button is handled by the Calendar page,
+  // which owns the page-level listener for the custom event and its own modal.
 
   if (isLoading) {
     return (

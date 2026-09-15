@@ -1,4 +1,6 @@
 // Project color utility functions
+import type { CSSProperties } from "react";
+
 export const PROJECT_COLORS = [
   {
     bg: "bg-green-600",

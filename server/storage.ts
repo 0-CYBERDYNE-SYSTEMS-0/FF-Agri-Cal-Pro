@@ -1,6 +1,9 @@
-import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, notifications, type Notification, type InsertNotification, images, type Image, type InsertImage, WeatherForecast } from "@shared/schema";
-import { db } from "./db";
+import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, farms, type Farm, type UpsertFarm, fields, type Field, type InsertField, crops, type Crop, type InsertCrop, equipment, type Equipment, type InsertEquipment, buildings, type Building, type InsertBuilding, staff, type StaffMember, type InsertStaffMember, plans, type Plan, type InsertPlan, proposals, type Proposal, type InsertProposal, notifications, type Notification, type InsertNotification, weatherCache, WeatherForecast } from "@shared/schema";
+import { getDb } from "../db";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "@shared/schema";
+import * as bcrypt from "bcrypt";
 
 export interface IStorage {
   // User methods
@@ -17,10 +20,12 @@ export interface IStorage {
 
   // Event methods
   getEvent(id: number): Promise<Event | undefined>;
+  getEventByUid(userId: number, uid: string): Promise<Event | undefined>;
   getEventsByUser(userId: number): Promise<Event[]>;
   getEventsByProject(projectId: number): Promise<Event[]>;
   getEventsByDateRange(userId: number, startDate: Date, endDate: Date): Promise<Event[]>;
   createEvent(event: InsertEvent): Promise<Event>;
+  createEvents(events: InsertEvent[]): Promise<Event[]>;
   updateEvent(id: number, event: Partial<Event>): Promise<Event | undefined>;
   deleteEvent(id: number): Promise<boolean>;
 
@@ -48,24 +53,71 @@ export interface IStorage {
   updateUserDocument(id: number, document: Partial<UserDocument>): Promise<UserDocument | undefined>;
   deleteUserDocument(id: number): Promise<boolean>;
 
-  // Notification methods
+  // Farm profile (one per user)
+  getFarmByUser(userId: number): Promise<Farm | undefined>;
+  createFarm(farm: UpsertFarm): Promise<Farm>;
+  updateFarm(id: number, farm: Partial<Farm>): Promise<Farm | undefined>;
+  getAllFarmUserIds(): Promise<number[]>;
+
+  // Field methods
+  getField(id: number): Promise<Field | undefined>;
+  getFieldsByUser(userId: number): Promise<Field[]>;
+  createField(field: InsertField): Promise<Field>;
+  updateField(id: number, field: Partial<Field>): Promise<Field | undefined>;
+  deleteField(id: number): Promise<boolean>;
+
+  // Crop methods
+  getCrop(id: number): Promise<Crop | undefined>;
+  getCropsByUser(userId: number): Promise<Crop[]>;
+  createCrop(crop: InsertCrop): Promise<Crop>;
+  updateCrop(id: number, crop: Partial<Crop>): Promise<Crop | undefined>;
+  deleteCrop(id: number): Promise<boolean>;
+
+  // Equipment methods
+  getEquipment(id: number): Promise<Equipment | undefined>;
+  getEquipmentByUser(userId: number): Promise<Equipment[]>;
+  createEquipment(item: InsertEquipment): Promise<Equipment>;
+  updateEquipment(id: number, item: Partial<Equipment>): Promise<Equipment | undefined>;
+  deleteEquipment(id: number): Promise<boolean>;
+
+  // Building methods
+  getBuilding(id: number): Promise<Building | undefined>;
+  getBuildingsByUser(userId: number): Promise<Building[]>;
+  createBuilding(building: InsertBuilding): Promise<Building>;
+  updateBuilding(id: number, building: Partial<Building>): Promise<Building | undefined>;
+  deleteBuilding(id: number): Promise<boolean>;
+
+  // Staff methods
+  getStaffMember(id: number): Promise<StaffMember | undefined>;
+  getStaffByUser(userId: number): Promise<StaffMember[]>;
+  createStaffMember(member: InsertStaffMember): Promise<StaffMember>;
+  updateStaffMember(id: number, member: Partial<StaffMember>): Promise<StaffMember | undefined>;
+  deleteStaffMember(id: number): Promise<boolean>;
+
+  // Plan methods (researched event batches, approval-gated)
+  getPlan(id: number): Promise<Plan | undefined>;
+  getPlansByUser(userId: number): Promise<Plan[]>;
+  createPlan(plan: InsertPlan): Promise<Plan>;
+  updatePlan(id: number, plan: Partial<Plan>): Promise<Plan | undefined>;
+
+  // Proposal methods (agent change sets awaiting approval)
+  getProposal(id: number): Promise<Proposal | undefined>;
+  getProposalsByUser(userId: number): Promise<Proposal[]>;
+  getPendingProposalsByUser(userId: number): Promise<Proposal[]>;
+  createProposal(proposal: InsertProposal): Promise<Proposal>;
+  updateProposal(id: number, proposal: Partial<Proposal>): Promise<Proposal | undefined>;
+
+  // Notification methods (inbox behind the bell)
   getNotification(id: number): Promise<Notification | undefined>;
   getNotificationsByUser(userId: number): Promise<Notification[]>;
-  getUnreadNotificationsByUser(userId: number): Promise<Notification[]>;
   createNotification(notification: InsertNotification): Promise<Notification>;
-  markNotificationAsRead(id: number): Promise<Notification | undefined>;
-  dismissNotification(id: number): Promise<boolean>;
-  deleteNotification(id: number): Promise<boolean>;
+  markNotificationRead(id: number, read: boolean): Promise<Notification | undefined>;
+  markAllNotificationsRead(userId: number): Promise<number>;
 
-  // Image methods
-  getImage(id: number): Promise<Image | undefined>;
-  getImagesByUser(userId: number): Promise<Image[]>;
-  getImagesByEvent(eventId: number): Promise<Image[]>;
-  getImagesByConversation(conversationId: number): Promise<Image[]>;
-  createImage(image: InsertImage): Promise<Image>;
-  deleteImage(id: number): Promise<boolean>;
+  // Weather cache persistence (observed/forecast history)
+  upsertWeatherCache(location: string, date: Date, data: unknown): Promise<void>;
 
-  // Storage interface intentionally doesn't include weather functions
+  // Storage interface intentionally doesn't include weather fetch functions
   // as weather data comes directly from the OpenWeatherAPI
 }
 
@@ -76,16 +128,32 @@ export class MemStorage implements IStorage {
   private conversations: Map<number, Conversation>;
   private userFiles: Map<number, UserFile>;
   private userDocuments: Map<number, UserDocument>;
+  private farms: Map<number, Farm>;
+  private fields: Map<number, Field>;
+  private crops: Map<number, Crop>;
+  private equipment: Map<number, Equipment>;
+  private buildings: Map<number, Building>;
+  private staff: Map<number, StaffMember>;
+  private plans: Map<number, Plan>;
+  private proposals: Map<number, Proposal>;
   private notifications: Map<number, Notification>;
-  private images: Map<number, Image>;
+  private weatherCacheRows: Map<string, { id: number; location: string; date: Date; data: unknown; createdAt: Date }>;
   private currentUserId: number;
   private currentProjectId: number;
   private currentEventId: number;
   private currentConversationId: number;
   private currentUserFileId: number;
   private currentUserDocumentId: number;
+  private currentFarmId: number;
+  private currentFieldId: number;
+  private currentCropId: number;
+  private currentEquipmentId: number;
+  private currentBuildingId: number;
+  private currentStaffId: number;
+  private currentPlanId: number;
+  private currentProposalId: number;
   private currentNotificationId: number;
-  private currentImageId: number;
+  private currentWeatherCacheId: number;
 
   constructor() {
     this.users = new Map();
@@ -94,16 +162,32 @@ export class MemStorage implements IStorage {
     this.conversations = new Map();
     this.userFiles = new Map();
     this.userDocuments = new Map();
+    this.farms = new Map();
+    this.fields = new Map();
+    this.crops = new Map();
+    this.equipment = new Map();
+    this.buildings = new Map();
+    this.staff = new Map();
+    this.plans = new Map();
+    this.proposals = new Map();
     this.notifications = new Map();
-    this.images = new Map();
+    this.weatherCacheRows = new Map();
     this.currentUserId = 1;
     this.currentProjectId = 1;
     this.currentEventId = 1;
     this.currentConversationId = 1;
     this.currentUserFileId = 1;
     this.currentUserDocumentId = 1;
+    this.currentFarmId = 1;
+    this.currentFieldId = 1;
+    this.currentCropId = 1;
+    this.currentEquipmentId = 1;
+    this.currentBuildingId = 1;
+    this.currentStaffId = 1;
+    this.currentPlanId = 1;
+    this.currentProposalId = 1;
     this.currentNotificationId = 1;
-    this.currentImageId = 1;
+    this.currentWeatherCacheId = 1;
 
     // Initialize with sample data
     this.initSampleData().catch(error => {
@@ -112,10 +196,11 @@ export class MemStorage implements IStorage {
   }
 
   private async initSampleData() {
-    // Create a sample user
+    // Create a sample user (password hashed for bcrypt compatibility)
+    const hashedPassword = await bcrypt.hash("password123", 10);
     const sampleUser: InsertUser = {
       username: "demo",
-      password: "password123",
+      password: hashedPassword,
       email: "demo@example.com",
       displayName: "Sarah Johnson",
       profileImage: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
@@ -220,7 +305,7 @@ export class MemStorage implements IStorage {
         location: "Compost Area",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: null }
+        recurringPattern: { frequency: "week", interval: 1, endDate: null }
       },
       {
         userId: user.id,
@@ -233,7 +318,7 @@ export class MemStorage implements IStorage {
         location: "Main Garden",
         checkWeather: true,
         isRecurring: true,
-        recurringPattern: { frequency: "daily", interval: 2, endDate: new Date(currentYear, currentMonth + 1, 14) }
+        recurringPattern: { frequency: "day", interval: 2, endDate: new Date(currentYear, currentMonth + 1, 14) }
       },
       {
         userId: user.id,
@@ -314,7 +399,7 @@ export class MemStorage implements IStorage {
         location: "All Gardens",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 10) }
+        recurringPattern: { frequency: "week", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 10) }
       },
       {
         userId: user.id,
@@ -394,7 +479,7 @@ export class MemStorage implements IStorage {
         location: "Vegetable Garden",
         checkWeather: true,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 30) }
+        recurringPattern: { frequency: "week", interval: 1, endDate: new Date(currentYear, currentMonth + 2, 30) }
       },
       {
         userId: user.id,
@@ -446,7 +531,7 @@ export class MemStorage implements IStorage {
         location: "Compost Area",
         checkWeather: false,
         isRecurring: true,
-        recurringPattern: { frequency: "weekly", interval: 1, endDate: null }
+        recurringPattern: { frequency: "week", interval: 1, endDate: null }
       },
       
       // Future events
@@ -607,9 +692,9 @@ export class MemStorage implements IStorage {
 
   async createEvent(insertEvent: InsertEvent): Promise<Event> {
     const id = this.currentEventId++;
-    const event: Event = { 
-      ...insertEvent, 
-      id, 
+    const event: Event = {
+      ...insertEvent,
+      id,
       createdAt: new Date(),
       description: insertEvent.description || null,
       projectId: insertEvent.projectId || null,
@@ -618,11 +703,7 @@ export class MemStorage implements IStorage {
       checkWeather: insertEvent.checkWeather || null,
       isRecurring: insertEvent.isRecurring || null,
       recurringPattern: insertEvent.recurringPattern || null,
-      instructions: insertEvent.instructions || null,
-      materials: insertEvent.materials || null,
-      researchLinks: insertEvent.researchLinks || null,
-      notes: insertEvent.notes || null,
-      imageUrls: insertEvent.imageUrls || null
+      uid: insertEvent.uid ?? null
     };
     this.events.set(id, event);
     return event;
@@ -639,6 +720,20 @@ export class MemStorage implements IStorage {
 
   async deleteEvent(id: number): Promise<boolean> {
     return this.events.delete(id);
+  }
+
+  async createEvents(eventsToInsert: InsertEvent[]): Promise<Event[]> {
+    const created: Event[] = [];
+    for (const eventData of eventsToInsert) {
+      created.push(await this.createEvent(eventData));
+    }
+    return created;
+  }
+
+  async getEventByUid(userId: number, uid: string): Promise<Event | undefined> {
+    return Array.from(this.events.values()).find(
+      (event) => event.userId === userId && event.uid === uid,
+    );
   }
 
   // Conversation methods
@@ -776,6 +871,299 @@ export class MemStorage implements IStorage {
     return this.userDocuments.delete(id);
   }
 
+  // Farm profile methods
+  async getFarmByUser(userId: number): Promise<Farm | undefined> {
+    return Array.from(this.farms.values()).find(farm => farm.userId === userId);
+  }
+
+  async createFarm(insertFarm: UpsertFarm): Promise<Farm> {
+    const id = this.currentFarmId++;
+    const now = new Date();
+    const farm: Farm = {
+      ...insertFarm,
+      id,
+      createdAt: now,
+      updatedAt: now,
+      locationName: insertFarm.locationName ?? null,
+      latitude: insertFarm.latitude ?? null,
+      longitude: insertFarm.longitude ?? null,
+      timeZone: insertFarm.timeZone ?? null,
+      growingZone: insertFarm.growingZone ?? null,
+      totalAcres: insertFarm.totalAcres ?? null,
+      notes: insertFarm.notes ?? null,
+    };
+    this.farms.set(id, farm);
+    return farm;
+  }
+
+  async updateFarm(id: number, farmData: Partial<Farm>): Promise<Farm | undefined> {
+    const farm = this.farms.get(id);
+    if (!farm) return undefined;
+    const updated = { ...farm, ...farmData, updatedAt: new Date() };
+    this.farms.set(id, updated);
+    return updated;
+  }
+
+  async getAllFarmUserIds(): Promise<number[]> {
+    return Array.from(this.farms.values()).map(farm => farm.userId);
+  }
+
+  // Field methods
+  async getField(id: number): Promise<Field | undefined> {
+    return this.fields.get(id);
+  }
+
+  async getFieldsByUser(userId: number): Promise<Field[]> {
+    return Array.from(this.fields.values()).filter(field => field.userId === userId);
+  }
+
+  async createField(insertField: InsertField): Promise<Field> {
+    const id = this.currentFieldId++;
+    const field: Field = {
+      ...insertField,
+      id,
+      createdAt: new Date(),
+      acres: insertField.acres ?? null,
+      soilType: insertField.soilType ?? null,
+      currentCrop: insertField.currentCrop ?? null,
+      status: insertField.status || "active",
+      notes: insertField.notes ?? null,
+    };
+    this.fields.set(id, field);
+    return field;
+  }
+
+  async updateField(id: number, fieldData: Partial<Field>): Promise<Field | undefined> {
+    const field = this.fields.get(id);
+    if (!field) return undefined;
+    const updated = { ...field, ...fieldData };
+    this.fields.set(id, updated);
+    return updated;
+  }
+
+  async deleteField(id: number): Promise<boolean> {
+    return this.fields.delete(id);
+  }
+
+  // Crop methods
+  async getCrop(id: number): Promise<Crop | undefined> {
+    return this.crops.get(id);
+  }
+
+  async getCropsByUser(userId: number): Promise<Crop[]> {
+    return Array.from(this.crops.values()).filter(crop => crop.userId === userId);
+  }
+
+  async createCrop(insertCrop: InsertCrop): Promise<Crop> {
+    const id = this.currentCropId++;
+    const crop: Crop = {
+      ...insertCrop,
+      id,
+      createdAt: new Date(),
+      fieldId: insertCrop.fieldId ?? null,
+      variety: insertCrop.variety ?? null,
+      plantedAt: insertCrop.plantedAt ?? null,
+      expectedHarvestAt: insertCrop.expectedHarvestAt ?? null,
+      status: insertCrop.status || "planning",
+      notes: insertCrop.notes ?? null,
+    };
+    this.crops.set(id, crop);
+    return crop;
+  }
+
+  async updateCrop(id: number, cropData: Partial<Crop>): Promise<Crop | undefined> {
+    const crop = this.crops.get(id);
+    if (!crop) return undefined;
+    const updated = { ...crop, ...cropData };
+    this.crops.set(id, updated);
+    return updated;
+  }
+
+  async deleteCrop(id: number): Promise<boolean> {
+    return this.crops.delete(id);
+  }
+
+  // Equipment methods
+  async getEquipment(id: number): Promise<Equipment | undefined> {
+    return this.equipment.get(id);
+  }
+
+  async getEquipmentByUser(userId: number): Promise<Equipment[]> {
+    return Array.from(this.equipment.values()).filter(item => item.userId === userId);
+  }
+
+  async createEquipment(insertEquipment: InsertEquipment): Promise<Equipment> {
+    const id = this.currentEquipmentId++;
+    const item: Equipment = {
+      ...insertEquipment,
+      id,
+      createdAt: new Date(),
+      category: insertEquipment.category ?? null,
+      status: insertEquipment.status || "operational",
+      notes: insertEquipment.notes ?? null,
+    };
+    this.equipment.set(id, item);
+    return item;
+  }
+
+  async updateEquipment(id: number, equipmentData: Partial<Equipment>): Promise<Equipment | undefined> {
+    const item = this.equipment.get(id);
+    if (!item) return undefined;
+    const updated = { ...item, ...equipmentData };
+    this.equipment.set(id, updated);
+    return updated;
+  }
+
+  async deleteEquipment(id: number): Promise<boolean> {
+    return this.equipment.delete(id);
+  }
+
+  // Building methods
+  async getBuilding(id: number): Promise<Building | undefined> {
+    return this.buildings.get(id);
+  }
+
+  async getBuildingsByUser(userId: number): Promise<Building[]> {
+    return Array.from(this.buildings.values()).filter(building => building.userId === userId);
+  }
+
+  async createBuilding(insertBuilding: InsertBuilding): Promise<Building> {
+    const id = this.currentBuildingId++;
+    const building: Building = {
+      ...insertBuilding,
+      id,
+      createdAt: new Date(),
+      category: insertBuilding.category ?? null,
+      notes: insertBuilding.notes ?? null,
+    };
+    this.buildings.set(id, building);
+    return building;
+  }
+
+  async updateBuilding(id: number, buildingData: Partial<Building>): Promise<Building | undefined> {
+    const building = this.buildings.get(id);
+    if (!building) return undefined;
+    const updated = { ...building, ...buildingData };
+    this.buildings.set(id, updated);
+    return updated;
+  }
+
+  async deleteBuilding(id: number): Promise<boolean> {
+    return this.buildings.delete(id);
+  }
+
+  // Staff methods
+  async getStaffMember(id: number): Promise<StaffMember | undefined> {
+    return this.staff.get(id);
+  }
+
+  async getStaffByUser(userId: number): Promise<StaffMember[]> {
+    return Array.from(this.staff.values()).filter(member => member.userId === userId);
+  }
+
+  async createStaffMember(insertStaff: InsertStaffMember): Promise<StaffMember> {
+    const id = this.currentStaffId++;
+    const member: StaffMember = {
+      ...insertStaff,
+      id,
+      createdAt: new Date(),
+      role: insertStaff.role ?? null,
+      contact: insertStaff.contact ?? null,
+      notes: insertStaff.notes ?? null,
+    };
+    this.staff.set(id, member);
+    return member;
+  }
+
+  async updateStaffMember(id: number, staffData: Partial<StaffMember>): Promise<StaffMember | undefined> {
+    const member = this.staff.get(id);
+    if (!member) return undefined;
+    const updated = { ...member, ...staffData };
+    this.staff.set(id, updated);
+    return updated;
+  }
+
+  async deleteStaffMember(id: number): Promise<boolean> {
+    return this.staff.delete(id);
+  }
+
+  // Plan methods
+  async getPlan(id: number): Promise<Plan | undefined> {
+    return this.plans.get(id);
+  }
+
+  async getPlansByUser(userId: number): Promise<Plan[]> {
+    return Array.from(this.plans.values())
+      .filter(plan => plan.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async createPlan(insertPlan: InsertPlan): Promise<Plan> {
+    const id = this.currentPlanId++;
+    const plan: Plan = {
+      ...insertPlan,
+      id,
+      createdAt: new Date(),
+      status: insertPlan.status || "draft",
+      projectId: insertPlan.projectId ?? null,
+      sources: insertPlan.sources ?? null,
+      summary: insertPlan.summary ?? null,
+      startDate: insertPlan.startDate ?? null,
+      appliedAt: null,
+    };
+    this.plans.set(id, plan);
+    return plan;
+  }
+
+  async updatePlan(id: number, planData: Partial<Plan>): Promise<Plan | undefined> {
+    const plan = this.plans.get(id);
+    if (!plan) return undefined;
+    const updated = { ...plan, ...planData };
+    this.plans.set(id, updated);
+    return updated;
+  }
+
+  // Proposal methods
+  async getProposal(id: number): Promise<Proposal | undefined> {
+    return this.proposals.get(id);
+  }
+
+  async getProposalsByUser(userId: number): Promise<Proposal[]> {
+    return Array.from(this.proposals.values())
+      .filter(proposal => proposal.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getPendingProposalsByUser(userId: number): Promise<Proposal[]> {
+    return Array.from(this.proposals.values())
+      .filter(proposal => proposal.userId === userId && proposal.status === "pending")
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async createProposal(insertProposal: InsertProposal): Promise<Proposal> {
+    const id = this.currentProposalId++;
+    const proposal: Proposal = {
+      ...insertProposal,
+      id,
+      createdAt: new Date(),
+      eventId: insertProposal.eventId ?? null,
+      evidence: insertProposal.evidence ?? null,
+      changeset: insertProposal.changeset ?? null,
+      status: insertProposal.status || "pending",
+      decidedAt: null,
+    };
+    this.proposals.set(id, proposal);
+    return proposal;
+  }
+
+  async updateProposal(id: number, proposalData: Partial<Proposal>): Promise<Proposal | undefined> {
+    const proposal = this.proposals.get(id);
+    if (!proposal) return undefined;
+    const updated = { ...proposal, ...proposalData };
+    this.proposals.set(id, updated);
+    return updated;
+  }
+
   // Notification methods
   async getNotification(id: number): Promise<Notification | undefined> {
     return this.notifications.get(id);
@@ -783,13 +1171,7 @@ export class MemStorage implements IStorage {
 
   async getNotificationsByUser(userId: number): Promise<Notification[]> {
     return Array.from(this.notifications.values())
-      .filter((notif) => notif.userId === userId && !notif.dismissed)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-  }
-
-  async getUnreadNotificationsByUser(userId: number): Promise<Notification[]> {
-    return Array.from(this.notifications.values())
-      .filter((notif) => notif.userId === userId && !notif.isRead && !notif.dismissed)
+      .filter(notification => notification.userId === userId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
@@ -798,145 +1180,125 @@ export class MemStorage implements IStorage {
     const notification: Notification = {
       ...insertNotification,
       id,
-      eventId: insertNotification.eventId || null,
-      icon: insertNotification.icon || null,
-      suggestedActions: insertNotification.suggestedActions || null,
-      isRead: false,
-      dismissed: false,
-      createdAt: new Date()
+      createdAt: new Date(),
+      proposalId: insertNotification.proposalId ?? null,
+      body: insertNotification.body ?? null,
+      read: insertNotification.read ?? false,
     };
     this.notifications.set(id, notification);
     return notification;
   }
 
-  async markNotificationAsRead(id: number): Promise<Notification | undefined> {
+  async markNotificationRead(id: number, read: boolean): Promise<Notification | undefined> {
     const notification = this.notifications.get(id);
     if (!notification) return undefined;
-
-    const updatedNotification = { ...notification, isRead: true };
-    this.notifications.set(id, updatedNotification);
-    return updatedNotification;
+    const updated = { ...notification, read };
+    this.notifications.set(id, updated);
+    return updated;
   }
 
-  async dismissNotification(id: number): Promise<boolean> {
-    const notification = this.notifications.get(id);
-    if (!notification) return false;
-
-    const updatedNotification = { ...notification, dismissed: true };
-    this.notifications.set(id, updatedNotification);
-    return true;
+  async markAllNotificationsRead(userId: number): Promise<number> {
+    let count = 0;
+    for (const notification of Array.from(this.notifications.values())) {
+      if (notification.userId === userId && !notification.read) {
+        notification.read = true;
+        count++;
+      }
+    }
+    return count;
   }
 
-  async deleteNotification(id: number): Promise<boolean> {
-    return this.notifications.delete(id);
-  }
-
-  // Image methods
-  async getImage(id: number): Promise<Image | undefined> {
-    return this.images.get(id);
-  }
-
-  async getImagesByUser(userId: number): Promise<Image[]> {
-    return Array.from(this.images.values())
-      .filter((img) => img.userId === userId)
-      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
-  }
-
-  async getImagesByEvent(eventId: number): Promise<Image[]> {
-    return Array.from(this.images.values())
-      .filter((img) => img.eventId === eventId)
-      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
-  }
-
-  async getImagesByConversation(conversationId: number): Promise<Image[]> {
-    return Array.from(this.images.values())
-      .filter((img) => img.conversationId === conversationId)
-      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
-  }
-
-  async createImage(insertImage: InsertImage): Promise<Image> {
-    const id = this.currentImageId++;
-    const image: Image = {
-      ...insertImage,
-      id,
-      eventId: insertImage.eventId || null,
-      conversationId: insertImage.conversationId || null,
-      aiAnalysis: insertImage.aiAnalysis || null,
-      uploadedAt: new Date()
-    };
-    this.images.set(id, image);
-    return image;
-  }
-
-  async deleteImage(id: number): Promise<boolean> {
-    return this.images.delete(id);
+  // Weather cache persistence
+  async upsertWeatherCache(location: string, date: Date, data: unknown): Promise<void> {
+    const key = `${location}|${date.toISOString().slice(0, 10)}`;
+    this.weatherCacheRows.set(key, {
+      id: this.weatherCacheRows.has(key) ? this.weatherCacheRows.get(key)!.id : this.currentWeatherCacheId++,
+      location,
+      date,
+      data,
+      createdAt: new Date(),
+    });
   }
 
   // Weather functionality removed in favor of OpenWeather API
 }
 
-// PostgreSQL Database Storage Implementation
-export class DatabaseStorage implements IStorage {
+// PostgreSQL storage backed by Drizzle over node-postgres, using the existing
+// schema in shared/schema.ts.
+export class DbStorage implements IStorage {
+  private db: NodePgDatabase<typeof schema>;
+
+  constructor(db: NodePgDatabase<typeof schema>) {
+    this.db = db;
+  }
+
   // User methods
   async getUser(id: number): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
+    return rows[0];
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(users).where(eq(users.username, username)).limit(1);
+    return rows[0];
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const result = await db.insert(users).values(insertUser).returning();
-    return result[0];
+  async createUser(user: InsertUser): Promise<User> {
+    const rows = await this.db.insert(users).values(user).returning();
+    return rows[0];
   }
 
   // Project methods
   async getProject(id: number): Promise<Project | undefined> {
-    const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    return rows[0];
   }
 
   async getProjectsByUser(userId: number): Promise<Project[]> {
-    return await db.select().from(projects).where(eq(projects.userId, userId));
+    return this.db.select().from(projects).where(eq(projects.userId, userId));
   }
 
-  async createProject(insertProject: InsertProject): Promise<Project> {
-    const result = await db.insert(projects).values(insertProject).returning();
-    return result[0];
+  async createProject(project: InsertProject): Promise<Project> {
+    const rows = await this.db.insert(projects).values(project).returning();
+    return rows[0];
   }
 
   async updateProject(id: number, projectData: Partial<Project>): Promise<Project | undefined> {
-    const result = await db.update(projects)
-      .set(projectData)
-      .where(eq(projects.id, id))
-      .returning();
-    return result[0];
+    const rows = await this.db.update(projects).set(projectData).where(eq(projects.id, id)).returning();
+    return rows[0];
   }
 
   async deleteProject(id: number): Promise<boolean> {
-    const result = await db.delete(projects).where(eq(projects.id, id)).returning();
-    return result.length > 0;
+    const rows = await this.db.delete(projects).where(eq(projects.id, id)).returning({ id: projects.id });
+    return rows.length > 0;
   }
 
   // Event methods
   async getEvent(id: number): Promise<Event | undefined> {
-    const result = await db.select().from(events).where(eq(events.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(events).where(eq(events.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getEventByUid(userId: number, uid: string): Promise<Event | undefined> {
+    const rows = await this.db
+      .select()
+      .from(events)
+      .where(and(eq(events.userId, userId), eq(events.uid, uid)))
+      .limit(1);
+    return rows[0];
   }
 
   async getEventsByUser(userId: number): Promise<Event[]> {
-    return await db.select().from(events).where(eq(events.userId, userId));
+    return this.db.select().from(events).where(eq(events.userId, userId));
   }
 
   async getEventsByProject(projectId: number): Promise<Event[]> {
-    return await db.select().from(events).where(eq(events.projectId, projectId));
+    return this.db.select().from(events).where(eq(events.projectId, projectId));
   }
 
   async getEventsByDateRange(userId: number, startDate: Date, endDate: Date): Promise<Event[]> {
-    return await db.select()
+    return this.db
+      .select()
       .from(events)
       .where(
         and(
@@ -947,213 +1309,377 @@ export class DatabaseStorage implements IStorage {
       );
   }
 
-  async createEvent(insertEvent: InsertEvent): Promise<Event> {
-    const result = await db.insert(events).values(insertEvent).returning();
-    return result[0];
+  async createEvent(event: InsertEvent): Promise<Event> {
+    const rows = await this.db.insert(events).values(event).returning();
+    return rows[0];
+  }
+
+  async createEvents(eventsToInsert: InsertEvent[]): Promise<Event[]> {
+    if (eventsToInsert.length === 0) return [];
+    return this.db.transaction(async (tx) => {
+      const created: Event[] = [];
+      for (const eventData of eventsToInsert) {
+        const rows = await tx.insert(events).values(eventData).returning();
+        created.push(rows[0]);
+      }
+      return created;
+    });
   }
 
   async updateEvent(id: number, eventData: Partial<Event>): Promise<Event | undefined> {
-    const result = await db.update(events)
-      .set(eventData)
-      .where(eq(events.id, id))
-      .returning();
-    return result[0];
+    const rows = await this.db.update(events).set(eventData).where(eq(events.id, id)).returning();
+    return rows[0];
   }
 
   async deleteEvent(id: number): Promise<boolean> {
-    const result = await db.delete(events).where(eq(events.id, id)).returning();
-    return result.length > 0;
+    const rows = await this.db.delete(events).where(eq(events.id, id)).returning({ id: events.id });
+    return rows.length > 0;
   }
 
   // Conversation methods
   async getConversation(id: number): Promise<Conversation | undefined> {
-    const result = await db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
+    return rows[0];
   }
 
   async getConversationsByUser(userId: number): Promise<Conversation[]> {
-    return await db.select().from(conversations).where(eq(conversations.userId, userId));
+    return this.db.select().from(conversations).where(eq(conversations.userId, userId));
   }
 
-  async createConversation(insertConversation: InsertConversation): Promise<Conversation> {
-    const result = await db.insert(conversations).values(insertConversation).returning();
-    return result[0];
+  async createConversation(conversation: InsertConversation): Promise<Conversation> {
+    const rows = await this.db.insert(conversations).values(conversation).returning();
+    return rows[0];
   }
 
   async updateConversation(id: number, messages: any[]): Promise<Conversation | undefined> {
-    const result = await db.update(conversations)
-      .set({ messages })
-      .where(eq(conversations.id, id))
-      .returning();
-    return result[0];
+    const rows = await this.db.update(conversations).set({ messages }).where(eq(conversations.id, id)).returning();
+    return rows[0];
   }
 
   // User file methods
   async getUserFile(id: number): Promise<UserFile | undefined> {
-    const result = await db.select().from(userFiles).where(eq(userFiles.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(userFiles).where(eq(userFiles.id, id)).limit(1);
+    return rows[0];
   }
 
   async getUserFilesByUser(userId: number): Promise<UserFile[]> {
-    return await db.select().from(userFiles).where(eq(userFiles.userId, userId));
+    return this.db.select().from(userFiles).where(eq(userFiles.userId, userId));
   }
 
   async getUserFilesByProject(projectId: number): Promise<UserFile[]> {
-    return await db.select().from(userFiles).where(eq(userFiles.projectId, projectId));
+    return this.db.select().from(userFiles).where(eq(userFiles.projectId, projectId));
   }
 
   async getUserFilesByType(userId: number, fileType: string): Promise<UserFile[]> {
-    return await db.select()
+    return this.db
+      .select()
       .from(userFiles)
       .where(and(eq(userFiles.userId, userId), eq(userFiles.fileType, fileType)));
   }
 
-  async createUserFile(insertFile: InsertUserFile): Promise<UserFile> {
-    const result = await db.insert(userFiles).values(insertFile).returning();
-    return result[0];
+  async createUserFile(file: InsertUserFile): Promise<UserFile> {
+    const rows = await this.db.insert(userFiles).values(file).returning();
+    return rows[0];
   }
 
   async updateUserFile(id: number, fileData: Partial<UserFile>): Promise<UserFile | undefined> {
-    const fileDataWithTimestamp = { ...fileData, lastAccessed: new Date() };
-    const result = await db.update(userFiles)
-      .set(fileDataWithTimestamp)
+    const rows = await this.db
+      .update(userFiles)
+      .set({ ...fileData, lastAccessed: new Date() })
       .where(eq(userFiles.id, id))
       .returning();
-    return result[0];
+    return rows[0];
   }
 
   async deleteUserFile(id: number): Promise<boolean> {
-    const result = await db.delete(userFiles).where(eq(userFiles.id, id)).returning();
-    return result.length > 0;
+    const rows = await this.db.delete(userFiles).where(eq(userFiles.id, id)).returning({ id: userFiles.id });
+    return rows.length > 0;
   }
 
   // User document methods
   async getUserDocument(id: number): Promise<UserDocument | undefined> {
-    const result = await db.select().from(userDocuments).where(eq(userDocuments.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(userDocuments).where(eq(userDocuments.id, id)).limit(1);
+    return rows[0];
   }
 
   async getUserDocumentsByUser(userId: number): Promise<UserDocument[]> {
-    return await db.select().from(userDocuments).where(eq(userDocuments.userId, userId));
+    return this.db.select().from(userDocuments).where(eq(userDocuments.userId, userId));
   }
 
   async getUserDocumentsByProject(projectId: number): Promise<UserDocument[]> {
-    return await db.select().from(userDocuments).where(eq(userDocuments.projectId, projectId));
+    return this.db.select().from(userDocuments).where(eq(userDocuments.projectId, projectId));
   }
 
   async getUserDocumentsByType(userId: number, documentType: string): Promise<UserDocument[]> {
-    return await db.select()
+    return this.db
+      .select()
       .from(userDocuments)
       .where(and(eq(userDocuments.userId, userId), eq(userDocuments.documentType, documentType)));
   }
 
-  async createUserDocument(insertDocument: InsertUserDocument): Promise<UserDocument> {
-    const result = await db.insert(userDocuments).values(insertDocument).returning();
-    return result[0];
+  async createUserDocument(document: InsertUserDocument): Promise<UserDocument> {
+    const rows = await this.db.insert(userDocuments).values(document).returning();
+    return rows[0];
   }
 
   async updateUserDocument(id: number, documentData: Partial<UserDocument>): Promise<UserDocument | undefined> {
-    const documentDataWithTimestamp = { ...documentData, updatedAt: new Date() };
-    const result = await db.update(userDocuments)
-      .set(documentDataWithTimestamp)
+    const rows = await this.db
+      .update(userDocuments)
+      .set({ ...documentData, updatedAt: new Date() })
       .where(eq(userDocuments.id, id))
       .returning();
-    return result[0];
+    return rows[0];
   }
 
   async deleteUserDocument(id: number): Promise<boolean> {
-    const result = await db.delete(userDocuments).where(eq(userDocuments.id, id)).returning();
-    return result.length > 0;
+    const rows = await this.db.delete(userDocuments).where(eq(userDocuments.id, id)).returning({ id: userDocuments.id });
+    return rows.length > 0;
+  }
+
+  // Farm profile methods
+  async getFarmByUser(userId: number): Promise<Farm | undefined> {
+    const rows = await this.db.select().from(farms).where(eq(farms.userId, userId)).limit(1);
+    return rows[0];
+  }
+
+  async createFarm(farm: UpsertFarm): Promise<Farm> {
+    const rows = await this.db.insert(farms).values(farm).returning();
+    return rows[0];
+  }
+
+  async updateFarm(id: number, farmData: Partial<Farm>): Promise<Farm | undefined> {
+    const rows = await this.db.update(farms).set({ ...farmData, updatedAt: new Date() }).where(eq(farms.id, id)).returning();
+    return rows[0];
+  }
+
+  async getAllFarmUserIds(): Promise<number[]> {
+    const rows = await this.db.select({ userId: farms.userId }).from(farms);
+    return rows.map(row => row.userId);
+  }
+
+  // Field methods
+  async getField(id: number): Promise<Field | undefined> {
+    const rows = await this.db.select().from(fields).where(eq(fields.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getFieldsByUser(userId: number): Promise<Field[]> {
+    return this.db.select().from(fields).where(eq(fields.userId, userId));
+  }
+
+  async createField(field: InsertField): Promise<Field> {
+    const rows = await this.db.insert(fields).values(field).returning();
+    return rows[0];
+  }
+
+  async updateField(id: number, fieldData: Partial<Field>): Promise<Field | undefined> {
+    const rows = await this.db.update(fields).set(fieldData).where(eq(fields.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteField(id: number): Promise<boolean> {
+    const rows = await this.db.delete(fields).where(eq(fields.id, id)).returning({ id: fields.id });
+    return rows.length > 0;
+  }
+
+  // Crop methods
+  async getCrop(id: number): Promise<Crop | undefined> {
+    const rows = await this.db.select().from(crops).where(eq(crops.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getCropsByUser(userId: number): Promise<Crop[]> {
+    return this.db.select().from(crops).where(eq(crops.userId, userId));
+  }
+
+  async createCrop(crop: InsertCrop): Promise<Crop> {
+    const rows = await this.db.insert(crops).values(crop).returning();
+    return rows[0];
+  }
+
+  async updateCrop(id: number, cropData: Partial<Crop>): Promise<Crop | undefined> {
+    const rows = await this.db.update(crops).set(cropData).where(eq(crops.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteCrop(id: number): Promise<boolean> {
+    const rows = await this.db.delete(crops).where(eq(crops.id, id)).returning({ id: crops.id });
+    return rows.length > 0;
+  }
+
+  // Equipment methods
+  async getEquipment(id: number): Promise<Equipment | undefined> {
+    const rows = await this.db.select().from(equipment).where(eq(equipment.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getEquipmentByUser(userId: number): Promise<Equipment[]> {
+    return this.db.select().from(equipment).where(eq(equipment.userId, userId));
+  }
+
+  async createEquipment(item: InsertEquipment): Promise<Equipment> {
+    const rows = await this.db.insert(equipment).values(item).returning();
+    return rows[0];
+  }
+
+  async updateEquipment(id: number, equipmentData: Partial<Equipment>): Promise<Equipment | undefined> {
+    const rows = await this.db.update(equipment).set(equipmentData).where(eq(equipment.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteEquipment(id: number): Promise<boolean> {
+    const rows = await this.db.delete(equipment).where(eq(equipment.id, id)).returning({ id: equipment.id });
+    return rows.length > 0;
+  }
+
+  // Building methods
+  async getBuilding(id: number): Promise<Building | undefined> {
+    const rows = await this.db.select().from(buildings).where(eq(buildings.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getBuildingsByUser(userId: number): Promise<Building[]> {
+    return this.db.select().from(buildings).where(eq(buildings.userId, userId));
+  }
+
+  async createBuilding(building: InsertBuilding): Promise<Building> {
+    const rows = await this.db.insert(buildings).values(building).returning();
+    return rows[0];
+  }
+
+  async updateBuilding(id: number, buildingData: Partial<Building>): Promise<Building | undefined> {
+    const rows = await this.db.update(buildings).set(buildingData).where(eq(buildings.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteBuilding(id: number): Promise<boolean> {
+    const rows = await this.db.delete(buildings).where(eq(buildings.id, id)).returning({ id: buildings.id });
+    return rows.length > 0;
+  }
+
+  // Staff methods
+  async getStaffMember(id: number): Promise<StaffMember | undefined> {
+    const rows = await this.db.select().from(staff).where(eq(staff.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getStaffByUser(userId: number): Promise<StaffMember[]> {
+    return this.db.select().from(staff).where(eq(staff.userId, userId));
+  }
+
+  async createStaffMember(member: InsertStaffMember): Promise<StaffMember> {
+    const rows = await this.db.insert(staff).values(member).returning();
+    return rows[0];
+  }
+
+  async updateStaffMember(id: number, staffData: Partial<StaffMember>): Promise<StaffMember | undefined> {
+    const rows = await this.db.update(staff).set(staffData).where(eq(staff.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteStaffMember(id: number): Promise<boolean> {
+    const rows = await this.db.delete(staff).where(eq(staff.id, id)).returning({ id: staff.id });
+    return rows.length > 0;
+  }
+
+  // Plan methods
+  async getPlan(id: number): Promise<Plan | undefined> {
+    const rows = await this.db.select().from(plans).where(eq(plans.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getPlansByUser(userId: number): Promise<Plan[]> {
+    return this.db.select().from(plans).where(eq(plans.userId, userId)).orderBy(desc(plans.createdAt));
+  }
+
+  async createPlan(plan: InsertPlan): Promise<Plan> {
+    const rows = await this.db.insert(plans).values(plan).returning();
+    return rows[0];
+  }
+
+  async updatePlan(id: number, planData: Partial<Plan>): Promise<Plan | undefined> {
+    const rows = await this.db.update(plans).set(planData).where(eq(plans.id, id)).returning();
+    return rows[0];
+  }
+
+  // Proposal methods
+  async getProposal(id: number): Promise<Proposal | undefined> {
+    const rows = await this.db.select().from(proposals).where(eq(proposals.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async getProposalsByUser(userId: number): Promise<Proposal[]> {
+    return this.db.select().from(proposals).where(eq(proposals.userId, userId)).orderBy(desc(proposals.createdAt));
+  }
+
+  async getPendingProposalsByUser(userId: number): Promise<Proposal[]> {
+    return this.db
+      .select()
+      .from(proposals)
+      .where(and(eq(proposals.userId, userId), eq(proposals.status, "pending")))
+      .orderBy(desc(proposals.createdAt));
+  }
+
+  async createProposal(proposal: InsertProposal): Promise<Proposal> {
+    const rows = await this.db.insert(proposals).values(proposal).returning();
+    return rows[0];
+  }
+
+  async updateProposal(id: number, proposalData: Partial<Proposal>): Promise<Proposal | undefined> {
+    const rows = await this.db.update(proposals).set(proposalData).where(eq(proposals.id, id)).returning();
+    return rows[0];
   }
 
   // Notification methods
   async getNotification(id: number): Promise<Notification | undefined> {
-    const result = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1);
-    return result[0];
+    const rows = await this.db.select().from(notifications).where(eq(notifications.id, id)).limit(1);
+    return rows[0];
   }
 
   async getNotificationsByUser(userId: number): Promise<Notification[]> {
-    return await db.select()
-      .from(notifications)
-      .where(and(eq(notifications.userId, userId), eq(notifications.dismissed, false)))
-      .orderBy(desc(notifications.createdAt));
+    return this.db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt));
   }
 
-  async getUnreadNotificationsByUser(userId: number): Promise<Notification[]> {
-    return await db.select()
-      .from(notifications)
-      .where(
-        and(
-          eq(notifications.userId, userId),
-          eq(notifications.isRead, false),
-          eq(notifications.dismissed, false)
-        )
-      )
-      .orderBy(desc(notifications.createdAt));
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const rows = await this.db.insert(notifications).values(notification).returning();
+    return rows[0];
   }
 
-  async createNotification(insertNotification: InsertNotification): Promise<Notification> {
-    const result = await db.insert(notifications).values(insertNotification).returning();
-    return result[0];
+  async markNotificationRead(id: number, read: boolean): Promise<Notification | undefined> {
+    const rows = await this.db.update(notifications).set({ read }).where(eq(notifications.id, id)).returning();
+    return rows[0];
   }
 
-  async markNotificationAsRead(id: number): Promise<Notification | undefined> {
-    const result = await db.update(notifications)
-      .set({ isRead: true })
-      .where(eq(notifications.id, id))
-      .returning();
-    return result[0];
+  async markAllNotificationsRead(userId: number): Promise<number> {
+    const rows = await this.db
+      .update(notifications)
+      .set({ read: true })
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false)))
+      .returning({ id: notifications.id });
+    return rows.length;
   }
 
-  async dismissNotification(id: number): Promise<boolean> {
-    const result = await db.update(notifications)
-      .set({ dismissed: true })
-      .where(eq(notifications.id, id))
-      .returning();
-    return result.length > 0;
-  }
-
-  async deleteNotification(id: number): Promise<boolean> {
-    const result = await db.delete(notifications).where(eq(notifications.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // Image methods
-  async getImage(id: number): Promise<Image | undefined> {
-    const result = await db.select().from(images).where(eq(images.id, id)).limit(1);
-    return result[0];
-  }
-
-  async getImagesByUser(userId: number): Promise<Image[]> {
-    return await db.select()
-      .from(images)
-      .where(eq(images.userId, userId))
-      .orderBy(desc(images.uploadedAt));
-  }
-
-  async getImagesByEvent(eventId: number): Promise<Image[]> {
-    return await db.select()
-      .from(images)
-      .where(eq(images.eventId, eventId))
-      .orderBy(desc(images.uploadedAt));
-  }
-
-  async getImagesByConversation(conversationId: number): Promise<Image[]> {
-    return await db.select()
-      .from(images)
-      .where(eq(images.conversationId, conversationId))
-      .orderBy(desc(images.uploadedAt));
-  }
-
-  async createImage(insertImage: InsertImage): Promise<Image> {
-    const result = await db.insert(images).values(insertImage).returning();
-    return result[0];
-  }
-
-  async deleteImage(id: number): Promise<boolean> {
-    const result = await db.delete(images).where(eq(images.id, id)).returning();
-    return result.length > 0;
+  // Weather cache persistence: one row per location per calendar day
+  async upsertWeatherCache(location: string, date: Date, data: unknown): Promise<void> {
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(weatherCache)
+        .where(
+          and(
+            eq(weatherCache.location, location),
+            gte(weatherCache.date, dayStart),
+            lte(weatherCache.date, dayEnd)
+          )
+        );
+      await tx.insert(weatherCache).values({ location, date: dayStart, data: data as never });
+    });
   }
 }
 
-export const storage = new MemStorage();
+// Persistent PostgreSQL storage is the default. In-memory storage exists only
+// for explicitly selected tests or demonstrations via MEM_STORAGE=1.
+export const storage: IStorage =
+  process.env.MEM_STORAGE === "1" ? new MemStorage() : new DbStorage(getDb());
+

@@ -108,4 +108,24 @@ server.log
 # Previous entries
 server/public
 vite.config.ts.*
-*.tar.gzdev.log
+*.tar.gz
+
+# Security: never commit these
+.ssh/
+*.log
+*.pem
+*.key
+%USERPROFILE%.ssh*
+.env
+.env.local
+.env.production
+
+# Replit platform files
+.replit
+replit.nix
+*.repomix.xml
+attached_assets/
+
+# Local media artifacts
+videos/
+.DS_Store

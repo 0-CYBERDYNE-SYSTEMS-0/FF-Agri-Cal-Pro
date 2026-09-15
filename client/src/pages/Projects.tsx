@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/lib/calendarUtils";
 import { PROJECT_COLORS } from "@/lib/colorUtils";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Projects() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -25,6 +26,7 @@ export default function Projects() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const { user } = useAuth();
   
   // Form state
   const [name, setName] = useState("");
@@ -40,6 +42,7 @@ export default function Projects() {
   
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
+    enabled: !!user,
   });
   
   const createProjectMutation = useMutation({
@@ -75,15 +78,38 @@ export default function Projects() {
       console.error(isEditing ? "Error updating project:" : "Error creating project:", error);
     }
   });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: async (projectId: number) => {
+      await apiRequest("DELETE", `/api/projects/${projectId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "Project deleted",
+        description: "The project has been deleted successfully."
+      });
+      setIsViewModalOpen(false);
+      setSelectedProject(null);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "There was a problem deleting the project.",
+        variant: "destructive"
+      });
+      console.error("Error deleting project:", error);
+    }
+  });
   
   const { data: projectEvents = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
-    queryKey: ["/api/events", selectedProject?.id],
+    queryKey: ["/api/events", "project", user?.id, selectedProject?.id],
     queryFn: async () => {
       if (!selectedProject) return [];
       const response = await apiRequest("GET", `/api/events?projectId=${selectedProject.id}`);
       return response.json();
     },
-    enabled: !!selectedProject
+    enabled: !!user && !!selectedProject
   });
   
   const resetForm = () => {
@@ -420,12 +446,23 @@ export default function Projects() {
                 </div>
               </div>
               
-              <DialogFooter>
+              <DialogFooter className="flex gap-2">
                 <Button 
                   onClick={() => setIsViewModalOpen(false)}
                   variant="outline"
                 >
                   Close
+                </Button>
+                <Button 
+                  onClick={() => {
+                    if (selectedProject && window.confirm(`Delete project "${selectedProject.name}"? This will also remove all associated events.`)) {
+                      deleteProjectMutation.mutate(selectedProject.id);
+                    }
+                  }}
+                  variant="destructive"
+                  disabled={deleteProjectMutation.isPending}
+                >
+                  {deleteProjectMutation.isPending ? "Deleting..." : "Delete"}
                 </Button>
                 <Button 
                   onClick={() => {

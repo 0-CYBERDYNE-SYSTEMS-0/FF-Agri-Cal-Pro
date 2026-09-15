@@ -62,28 +62,28 @@ export default function ForecastCard({ forecast, isToday = false, compact = fals
                 
                 <div className="text-neutral-500">Wind</div>
                 <div className="font-medium">{wind} mph</div>
-                
+
                 <div className="text-neutral-500">Humidity</div>
-                <div className="font-medium">{humidity}%</div>
+                <div className="font-medium">{humidity ?? "N/A"}</div>
               </div>
             </div>
-            
+
             <div>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="text-neutral-500">Precip</div>
-                <div className="font-medium">{precipitation}%</div>
-                
+                <div className="font-medium">{precipitation} in</div>
+
                 {pressure && (
                   <>
                     <div className="text-neutral-500">Pressure</div>
                     <div className="font-medium">{pressure} hPa</div>
                   </>
                 )}
-                
+
                 {visibility && (
                   <>
                     <div className="text-neutral-500">Visibility</div>
-                    <div className="font-medium">{(visibility / 1000).toFixed(1)} km</div>
+                    <div className="font-medium">{visibility.toFixed(1)} km</div>
                   </>
                 )}
                 
@@ -135,7 +135,7 @@ export default function ForecastCard({ forecast, isToday = false, compact = fals
               <div className="mt-1 text-xs text-neutral-500">
                 <div className="flex justify-between">
                   <span>Wind: {wind}mph</span>
-                  <span>Hum: {humidity}%</span>
+                  <span>Hum: {humidity ?? "N/A"}</span>
                 </div>
                 <div className="flex justify-between mt-1">
                   <span className="text-blue-500">↓ {Math.round(temp_min || temperature)}°</span>
@@ -186,11 +186,11 @@ export default function ForecastCard({ forecast, isToday = false, compact = fals
           </div>
           <div className="flex justify-between items-center">
             <span>Humidity</span>
-            <span>{humidity}%</span>
+            <span>{humidity ?? "N/A"}</span>
           </div>
           <div className="flex justify-between items-center">
             <span>Precip</span>
-            <span>{precipitation}%</span>
+            <span>{precipitation} in</span>
           </div>
         </div>
         

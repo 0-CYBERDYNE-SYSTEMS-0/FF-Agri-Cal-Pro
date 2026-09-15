@@ -6,13 +6,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState, useEffect } from "react";
-import { formatDate } from "@/lib/calendarUtils";
+import { format } from "date-fns";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Project } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { getAiSuggestion } from "@/lib/openAiApi";
 import { getProjectColor } from "@/lib/colorUtils";
+import { useAuth } from "@/contexts/AuthContext";
+import MarkdownRenderer from "@/components/ui/markdown-renderer";
 
 interface EventModalProps {
   isOpen: boolean;
@@ -41,9 +43,11 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
+    enabled: !!user && isOpen,
   });
 
   // Reset form when modal opens/closes
@@ -68,15 +72,15 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
       const endTime = new Date(now);
       endTime.setHours(endTime.getHours() + 1);
       
-      setStartDate(formatDate(now, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-      setStartTime(formatTimeForInput(now));
-      
-      setEndDate(formatDate(endTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-      setEndTime(formatTimeForInput(endTime));
-      
+      setStartDate(format(now, "yyyy-MM-dd"));
+      setStartTime(format(now, "HH:mm"));
+
+      setEndDate(format(endTime, "yyyy-MM-dd"));
+      setEndTime(format(endTime, "HH:mm"));
+
       const oneMonthLater = new Date(now);
       oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
-      setRecurrenceEndDate(formatDate(oneMonthLater, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+      setRecurrenceEndDate(format(oneMonthLater, "yyyy-MM-dd"));
     }
   }, [isOpen, selectedDate, projects]);
 
@@ -107,24 +111,24 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
           // Format dates and times
           if (eventData.startDate) {
             const startDateTime = new Date(eventData.startDate);
-            setStartDate(formatDate(startDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-            setStartTime(formatTimeForInput(startDateTime));
+            setStartDate(format(startDateTime, "yyyy-MM-dd"));
+            setStartTime(format(startDateTime, "HH:mm"));
           }
-          
+
           if (eventData.endDate) {
             const endDateTime = new Date(eventData.endDate);
-            setEndDate(formatDate(endDateTime, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
-            setEndTime(formatTimeForInput(endDateTime));
+            setEndDate(format(endDateTime, "yyyy-MM-dd"));
+            setEndTime(format(endDateTime, "HH:mm"));
           }
-          
+
           // Handle recurring pattern if available
           if (eventData.recurringPattern) {
             setRecurrenceType(eventData.recurringPattern.frequency || "day");
             setRecurrenceInterval(eventData.recurringPattern.interval || 1);
-            
+
             if (eventData.recurringPattern.endDate) {
               const recurrenceEnd = new Date(eventData.recurringPattern.endDate);
-              setRecurrenceEndDate(formatDate(recurrenceEnd, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').join('-'));
+              setRecurrenceEndDate(format(recurrenceEnd, "yyyy-MM-dd"));
             }
           }
         } catch (error) {
@@ -175,10 +179,33 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     },
   });
 
-  const formatTimeForInput = (date: Date): string => {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+  const deleteEventMutation = useMutation({
+    mutationFn: async (eventId: number) => {
+      await apiRequest("DELETE", `/api/events/${eventId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      toast({
+        title: "Event deleted",
+        description: "The event has been deleted successfully.",
+      });
+      onClose();
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "There was an error deleting the event. Please try again.",
+        variant: "destructive",
+      });
+      console.error("Error deleting event:", error);
+    },
+  });
+
+  const handleDelete = () => {
+    if (!editEventId) return;
+    if (window.confirm(`Delete event "${title}"? This action cannot be undone.`)) {
+      deleteEventMutation.mutate(editEventId);
+    }
   };
 
   // Modify the handleSubmit to prevent duplicate submissions
@@ -227,7 +254,8 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     // Prepare recurring pattern if needed
     let recurringPattern = null;
     if (isRecurring) {
-      const endDate = recurrenceEndDate ? new Date(recurrenceEndDate) : null;
+      // Parse the yyyy-MM-dd input value as local time (matching current behavior)
+      const endDate = recurrenceEndDate ? new Date(`${recurrenceEndDate}T00:00`) : null;
       recurringPattern = {
         frequency: recurrenceType,
         interval: recurrenceInterval,
@@ -296,111 +324,7 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
     setShowAiSuggestions(false);
   };
   
-  // Function to generate a series of events from an AI plan
-  const handleGenerateEventSeries = async () => {
-    try {
-      setIsLoadingSuggestion(true);
-      
-      // Get the selected project's details
-      const selectedProject = projects.find(p => p.id === parseInt(projectId));
-      
-      // Create a prompt to generate a series of events
-      const prompt = `I need to create a complete calendar for my agricultural project titled "${selectedProject?.name || 'my project'}". ${
-        selectedProject?.description ? `Project overview: ${selectedProject.description}. ` : ''
-      }
-      Starting date: ${startDate}.
-      ${selectedProject?.endDate ? `Ending date: ${new Date(selectedProject.endDate).toISOString().split('T')[0]}.` : ''}
-      ${location ? `Location: ${location}. ` : ''}
-      
-      Please generate a detailed timeline of agricultural events that would be part of this project, including:
-      1. A title for each task or event
-      2. A brief description of each task
-      3. When each task should be scheduled (exact date if possible)
-      4. Approximate duration for each task
-      
-      Format your response as a structured JSON array with fields: title, description, suggestedDate, durationHours`;
-      
-      const suggestion = await getAiSuggestion(prompt);
-      
-      // Try to parse the JSON from the AI response
-      let eventData: any[] = [];
-      try {
-        // Find the JSON part in the response (it might be wrapped in markdown code blocks)
-        const jsonMatch = suggestion.match(/```json\n([\s\S]*?)\n```/) || 
-                          suggestion.match(/```\n([\s\S]*?)\n```/) || 
-                          suggestion.match(/\[([\s\S]*?)\]/);
-        
-        const jsonText = jsonMatch ? jsonMatch[1] : suggestion;
-        eventData = JSON.parse(jsonText.includes('[') ? jsonText : `[${jsonText}]`);
-      } catch (parseError) {
-        console.error("Error parsing AI suggestion:", parseError);
-        toast({
-          title: "Error",
-          description: "Could not parse the AI-generated event plan. Please try again or create events manually.",
-          variant: "destructive",
-        });
-        setAiSuggestion(suggestion);
-        return;
-      }
-      
-      // Create multiple events based on the AI suggestion
-      for (const event of eventData) {
-        if (!event.title) continue;
-        
-        // Calculate start and end times
-        let startDateTime = new Date(event.suggestedDate || startDate);
-        if (isNaN(startDateTime.getTime())) {
-          startDateTime = new Date(startDate);
-        }
-        
-        // Set start time to 9 AM if not specified
-        startDateTime.setHours(9, 0, 0, 0);
-        
-        // Calculate end time based on duration (default to 1 hour)
-        const duration = event.durationHours || 1;
-        const endDateTime = new Date(startDateTime);
-        endDateTime.setHours(endDateTime.getHours() + duration);
-        
-        // Create the event
-        const eventData = {
-          title: event.title,
-          description: event.description || "",
-          startDate: startDateTime.toISOString(),
-          endDate: endDateTime.toISOString(),
-          projectId: projectId ? parseInt(projectId) : null,
-          location: location,
-          checkWeather: true,
-          isRecurring: false,
-          recurringPattern: null
-        };
-        
-        // Submit the event
-        try {
-          await eventMutation.mutateAsync(eventData);
-        } catch (error) {
-          console.error("Error creating event:", error);
-        }
-      }
-      
-      toast({
-        title: "Events created",
-        description: `${eventData.length} events have been added to your calendar.`,
-      });
-      
-      onClose();
-    } catch (error) {
-      console.error("Error generating event series:", error);
-      toast({
-        title: "Error",
-        description: "There was an error creating events. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingSuggestion(false);
-    }
-  };
 
-  // Get the currently selected project and its color
   const selectedProject = projects.find(p => p.id === parseInt(projectId));
   const projectColor = selectedProject ? getProjectColor(selectedProject) : null;
 
@@ -521,13 +445,21 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
           
           <div>
             <Label htmlFor="event-description">Description</Label>
-            <Textarea 
+            <Textarea
               id="event-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="mt-1"
-              rows={3}
+              rows={8}
             />
+            <p className="text-xs text-neutral-500 mt-1">
+              Markdown supported — steps, materials, rates, safety notes.
+            </p>
+            {description.trim() !== "" && (
+              <div className="mt-2 max-h-48 overflow-y-auto p-3 bg-neutral-50 rounded-md border border-neutral-200 text-sm text-neutral-700">
+                <MarkdownRenderer content={description} className="prose-sm" />
+              </div>
+            )}
           </div>
           
           <div className="flex items-center space-x-2">
@@ -629,23 +561,38 @@ export default function EventModal({ isOpen, onClose, selectedDate, editEventId 
                 type="button" 
                 variant="outline" 
                 className="flex-1"
-                onClick={handleGenerateEventSeries}
-                disabled={isLoadingSuggestion || !projectId}
+                onClick={() => {
+                  onClose();
+                  window.dispatchEvent(new CustomEvent("open-plan-composer", { detail: { goal: title || "" } }));
+                }}
+                disabled={isLoadingSuggestion}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-primary" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
                 </svg>
-                Generate Calendar
+                Plan This Goal
               </Button>
             </div>
             
-            <Button 
-              type="submit" 
-              className="bg-primary hover:bg-primary-dark w-full"
-              disabled={eventMutation.isPending}
-            >
-              {eventMutation.isPending ? "Creating..." : "Create Event"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {editEventId && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteEventMutation.isPending}
+                >
+                  {deleteEventMutation.isPending ? "Deleting..." : "Delete"}
+                </Button>
+              )}
+              <Button
+                type="submit"
+                className="bg-primary hover:bg-primary-dark flex-1"
+                disabled={eventMutation.isPending || deleteEventMutation.isPending}
+              >
+                {eventMutation.isPending ? "Saving..." : editEventId ? "Save Changes" : "Create Event"}
+              </Button>
+            </div>
           </div>
         </form>
       </DialogContent>
