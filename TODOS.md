@@ -51,11 +51,24 @@ Pillar 3 — the proactive farm manager:
 - The vision scenario is a regression test: rainy-day planting → proposal
   moves it to the next workable day → approval moves the event
 
-### Verified
-- `npm run check` clean; `npm test` 70/70 passing
-- Production build succeeds (`npm run build`)
-- E2E smoke against the dev database: register → login → farm upsert →
-  field → crop → plan preview → plan apply → double-apply 409 → agent run
+### Verified (launch-day re-run, 2026-09-17)
+- `npm run check` clean (exit 0)
+- `npm test` 70/70 passing, 0 failed (exit 0)
+- Production build succeeds (`npm run build`): `dist/index.js` server bundle
+  + `dist/public` client assets
+- Production smoke test against the built bundle (`NODE_ENV=production node
+  dist/index.js`): boots clean (PostgreSQL connected, agent watch started,
+  no errors in log); GET / serves the built client; register → login (Secure
+  session cookie via simulated TLS-terminating proxy) → `/api/auth/status`
+  authenticated → event create (201) → list → delete (204) → logout →
+  unauthenticated; unauthenticated `/api/events` rejected 401. Test user,
+  events, and sessions cleaned up afterwards
+- `npm run db:push` is now a verified no-op: the runtime-owned `session`
+  table (connect-pg-simple) is excluded via `tablesFilter` in
+  `drizzle.config.ts`; before that fix, push wanted to DROP the live session
+  table. All app tables match `shared/schema.ts`
+- Earlier E2E smoke against the dev database: register → login → farm upsert
+  → field → crop → plan preview → plan apply → double-apply 409 → agent run
   against the live Open-Meteo forecast → notifications endpoints → cleanup
 
 ### Remaining (known gaps)

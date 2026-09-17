@@ -11,7 +11,7 @@
 </h3>
 
 <p align="center">
-<img src="https://img.shields.io/badge/STATUS-IN%20DEVELOPMENT-ffaa00?style=flat-square&labelColor=000000">
+<img src="https://img.shields.io/badge/STATUS-PRODUCTION%20READY-22c55e?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/AI-POWERED-ff69b4?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/WEATHER-INTEGRATED-00bfff?style=flat-square&labelColor=000000">
 <img src="https://img.shields.io/badge/BUILT%20WITH-TYPESCRIPT-3178c6?style=flat-square&labelColor=000000">
@@ -90,6 +90,7 @@ npm install
 cp .env.example .env
 # Add your configuration:
 # - DATABASE_URL (PostgreSQL, required for normal startup)
+# - SESSION_SECRET (any long random string; keeps logins stable across restarts)
 # - OPENAI_API_KEY
 # - CHAT_MODEL (optional override of the single assistant model)
 # Database initialization

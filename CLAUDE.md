@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run build` - Build the application for production
 - `npm run start` - Start production server
 - `npm run check` - TypeScript type checking across entire codebase
+- `npm test` - Run the regression suite (node:test, tests/*.test.ts)
 - `npm run db:push` - Push database schema changes using Drizzle
 
 ### Database Management
@@ -45,15 +46,14 @@ This is a monorepo with client-server architecture:
 - **Express.js** backend with TypeScript
 - **Drizzle ORM** with PostgreSQL database
 - **OpenAI API** integration for AI assistant features
-- **OpenWeather API** integration for weather data
-- **WebSocket** support for real-time features
+- **Open-Meteo** integration for weather data (no API key required)
 
 ### Core Features & Data Flow
 
 #### Calendar System
 - Calendar events stored in PostgreSQL via Drizzle ORM
 - Events can be linked to projects and include weather data
-- AI assistant can create/modify events through `calendarService.ts`
+- AI assistant can create/modify events through typed tool calls (`server/toolSchemas.ts`)
 - Multiple view types: day, week, month, year
 
 #### AI Assistant Integration
@@ -63,10 +63,10 @@ This is a monorepo with client-server architecture:
 - Chat interface in `components/assistant/ChatInterface.tsx`
 
 #### Weather Integration
-- Real OpenWeather API integration (not mocked data)
+- Real Open-Meteo API integration (not mocked data; no API key required)
 - Location-based weather forecasting
 - Agriculture-specific recommendations
-- Caching layer for API efficiency (5-minute cache)
+- Caching layer for API efficiency (10-minute cache, `server/openWeatherApi.ts`)
 - Weather data influences calendar event suggestions
 
 #### Location Services
@@ -80,6 +80,10 @@ Key tables (from `shared/schema.ts`):
 - `projects` - Project management with status tracking
 - `events` - Calendar events with project/weather linking
 - `conversations` - AI chat history storage
+- Farm memory: `farms`, `fields`, `crops`, `equipment`, `buildings`, `staff`
+- Planning & agent: `plans`, `proposals`, `notifications`, `weather_cache`
+- `session` is created and owned at runtime by connect-pg-simple and is
+  excluded from drizzle-kit push (`tablesFilter` in `drizzle.config.ts`)
 
 ### API Integration Patterns
 - All external APIs are proxied through the backend server
@@ -94,10 +98,10 @@ Key tables (from `shared/schema.ts`):
 - Environment variables: Create `.env` file in root for API keys
 
 ### Testing Approach
-- No testing framework currently configured
-- Manual testing workflow recommended
-- Use browser dev tools and server logs for debugging
-- API testing can be done through the client interface
+- Regression suite via the built-in `node:test` runner: `npm test`
+- Tests live in `tests/*.test.ts` and run through tsx (no separate framework)
+- Storage, API, plans, research, recurrence, ICS, weather, and tool schemas
+  are covered; add a test alongside behavioral changes
 
 ### Theme System
 - Custom theme configuration in `theme.json` files
@@ -109,5 +113,4 @@ Key tables (from `shared/schema.ts`):
 - Weather API requires valid location data - no automatic fallbacks
 - AI assistant can create calendar events with weather context
 - All API keys should be server-side only
-- Real-time features use WebSocket connections
 - Agriculture-focused features for farming/outdoor activities
