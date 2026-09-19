@@ -1,6 +1,6 @@
 # Calendar reliability specification
 
-Status: proposed changes; application code is unchanged.
+Status: historical — the reliability pass (commit bb6b018) implemented this spec, and launch verification on 2026-09-19 confirmed it. Kept as the record of the review.
 Review date: 2026-09-08, America/Los_Angeles.
 Baseline: `release/v2`, `afafc605c05c7670560a1955ccf5e87d91928e7f`.
 
@@ -19,7 +19,7 @@ Do not add background scheduling, agents, a workflow framework, or a general mod
 The upstream branch hash matched this checkout during review. The review read its README, planning files, and implementation.
 The README describes PostgreSQL and OpenWeather. The actual runtime selects `MemStorage` and calls Open-Meteo.
 No deployed installation was identified or tested. This specification describes the checked branch.
-See `analysis-report.html` for findings, limits, and verification results.
+The review artifacts (`analysis-report.html`, `architecture.html`, `spec-awareness.html`) were removed in the post-launch cleanup; recover them from git history if needed.
 
 ## 1. Delete unsafe and false behavior first
 
@@ -182,7 +182,7 @@ Acceptance:
 Remove unused assistant function endpoints after a reference check and replacement of any remaining consumers.
 Remove duplicate ICS functions, deprecated weather wrappers, and unused natural-language parsers after caller migration.
 Correct README and TODOS claims about storage, weather provider, real-time updates, and completed verification.
-Do not delete `agri-cal-ui-minimal.zip` merely because it is an archive. Its purpose was not established.
+`agri-cal-ui-minimal.zip` was the pre-build UI mockup archive; the UI it specced has shipped. Removed in the post-launch cleanup — recoverable from git history.
 Do not remove UI primitives or dependencies without an import and build check.
 Keep the existing schema, React Query, useful forms, and calendar layouts. A new application framework is unnecessary.
 
