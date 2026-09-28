@@ -1,6 +1,6 @@
-import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, farms, type Farm, type UpsertFarm, fields, type Field, type InsertField, crops, type Crop, type InsertCrop, equipment, type Equipment, type InsertEquipment, buildings, type Building, type InsertBuilding, staff, type StaffMember, type InsertStaffMember, plans, type Plan, type InsertPlan, proposals, type Proposal, type InsertProposal, notifications, type Notification, type InsertNotification, weatherCache, WeatherForecast } from "@shared/schema";
+import { users, type User, type InsertUser, projects, type Project, type InsertProject, events, type Event, type InsertEvent, conversations, type Conversation, type InsertConversation, assistantActionApprovals, type AssistantActionApproval, type InsertAssistantActionApproval, userFiles, type UserFile, type InsertUserFile, userDocuments, type UserDocument, type InsertUserDocument, farms, type Farm, type UpsertFarm, fields, type Field, type InsertField, crops, type Crop, type InsertCrop, equipment, type Equipment, type InsertEquipment, buildings, type Building, type InsertBuilding, staff, type StaffMember, type InsertStaffMember, plans, type Plan, type InsertPlan, proposals, type Proposal, type InsertProposal, notifications, type Notification, type InsertNotification, weatherCache, WeatherForecast } from "@shared/schema";
 import { getDb } from "../db";
-import { eq, and, gte, lte, desc } from "drizzle-orm";
+import { eq, and, gte, lte, desc, gt, isNull, lte as lessThanOrEqual } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "@shared/schema";
 import * as bcrypt from "bcrypt";
@@ -34,6 +34,10 @@ export interface IStorage {
   getConversationsByUser(userId: number): Promise<Conversation[]>;
   createConversation(conversation: InsertConversation): Promise<Conversation>;
   updateConversation(id: number, messages: any[]): Promise<Conversation | undefined>;
+  createAssistantActionApproval(approval: InsertAssistantActionApproval): Promise<AssistantActionApproval>;
+  getPendingAssistantActionApprovals(userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval[]>;
+  claimAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval | undefined>;
+  cancelAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<boolean>;
 
   // User file methods
   getUserFile(id: number): Promise<UserFile | undefined>;
@@ -99,6 +103,7 @@ export interface IStorage {
   getPlansByUser(userId: number): Promise<Plan[]>;
   createPlan(plan: InsertPlan): Promise<Plan>;
   updatePlan(id: number, plan: Partial<Plan>): Promise<Plan | undefined>;
+  applyPlan(id: number, events: InsertEvent[], startDate: Date): Promise<{ plan: Plan; events: Event[] } | undefined>;
 
   // Proposal methods (agent change sets awaiting approval)
   getProposal(id: number): Promise<Proposal | undefined>;
@@ -126,6 +131,7 @@ export class MemStorage implements IStorage {
   private projects: Map<number, Project>;
   private events: Map<number, Event>;
   private conversations: Map<number, Conversation>;
+  private assistantActionApprovals: Map<string, AssistantActionApproval>;
   private userFiles: Map<number, UserFile>;
   private userDocuments: Map<number, UserDocument>;
   private farms: Map<number, Farm>;
@@ -160,6 +166,7 @@ export class MemStorage implements IStorage {
     this.projects = new Map();
     this.events = new Map();
     this.conversations = new Map();
+    this.assistantActionApprovals = new Map();
     this.userFiles = new Map();
     this.userDocuments = new Map();
     this.farms = new Map();
@@ -768,6 +775,35 @@ export class MemStorage implements IStorage {
     return updatedConversation;
   }
 
+  async createAssistantActionApproval(approval: InsertAssistantActionApproval): Promise<AssistantActionApproval> {
+    const record: AssistantActionApproval = { ...approval, claimedAt: null, createdAt: new Date() };
+    this.assistantActionApprovals.set(record.id, record);
+    return record;
+  }
+
+  async getPendingAssistantActionApprovals(userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval[]> {
+    for (const [id, approval] of Array.from(this.assistantActionApprovals.entries())) {
+      if (approval.expiresAt <= now) this.assistantActionApprovals.delete(id);
+    }
+    return Array.from(this.assistantActionApprovals.values()).filter(approval =>
+      approval.userId === userId && approval.conversationId === conversationId && !approval.claimedAt && approval.expiresAt > now
+    );
+  }
+
+  async claimAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval | undefined> {
+    const approval = this.assistantActionApprovals.get(id);
+    if (!approval || approval.userId !== userId || approval.conversationId !== conversationId || approval.claimedAt || approval.expiresAt <= now) {
+      return undefined;
+    }
+    const claimed = { ...approval, claimedAt: now };
+    this.assistantActionApprovals.set(id, claimed);
+    return claimed;
+  }
+
+  async cancelAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<boolean> {
+    return !!(await this.claimAssistantActionApproval(id, userId, conversationId, now));
+  }
+
   // User file methods
   async getUserFile(id: number): Promise<UserFile | undefined> {
     return this.userFiles.get(id);
@@ -1123,6 +1159,44 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  async applyPlan(id: number, eventsToInsert: InsertEvent[], startDate: Date): Promise<{ plan: Plan; events: Event[] } | undefined> {
+    const plan = this.plans.get(id);
+    if (!plan || plan.status !== "draft") return undefined;
+
+    // Claim synchronously before creating events so overlapping requests cannot
+    // both apply the same plan in the in-memory test/demo backend.
+    const appliedPlan = { ...plan, status: "applied", appliedAt: new Date(), startDate };
+    this.plans.set(id, appliedPlan);
+    const firstEventId = this.currentEventId;
+    const createdEvents: Event[] = [];
+    try {
+      for (const insertEvent of eventsToInsert) {
+        const eventId = this.currentEventId++;
+        const event: Event = {
+          ...insertEvent,
+          id: eventId,
+          createdAt: new Date(),
+          description: insertEvent.description || null,
+          projectId: insertEvent.projectId || null,
+          allDay: insertEvent.allDay || null,
+          location: insertEvent.location || null,
+          checkWeather: insertEvent.checkWeather || null,
+          isRecurring: insertEvent.isRecurring || null,
+          recurringPattern: insertEvent.recurringPattern || null,
+          uid: insertEvent.uid ?? null,
+        };
+        this.events.set(eventId, event);
+        createdEvents.push(event);
+      }
+      return { plan: appliedPlan, events: createdEvents };
+    } catch (error) {
+      for (const event of createdEvents) this.events.delete(event.id);
+      this.currentEventId = firstEventId;
+      this.plans.set(id, plan);
+      throw error;
+    }
+  }
+
   // Proposal methods
   async getProposal(id: number): Promise<Proposal | undefined> {
     return this.proposals.get(id);
@@ -1354,6 +1428,40 @@ export class DbStorage implements IStorage {
   async updateConversation(id: number, messages: any[]): Promise<Conversation | undefined> {
     const rows = await this.db.update(conversations).set({ messages }).where(eq(conversations.id, id)).returning();
     return rows[0];
+  }
+
+  async createAssistantActionApproval(approval: InsertAssistantActionApproval): Promise<AssistantActionApproval> {
+    const rows = await this.db.insert(assistantActionApprovals).values(approval).returning();
+    return rows[0];
+  }
+
+  async getPendingAssistantActionApprovals(userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval[]> {
+    await this.db.delete(assistantActionApprovals).where(lessThanOrEqual(assistantActionApprovals.expiresAt, now));
+    return this.db.select().from(assistantActionApprovals).where(and(
+      eq(assistantActionApprovals.userId, userId),
+      eq(assistantActionApprovals.conversationId, conversationId),
+      isNull(assistantActionApprovals.claimedAt),
+      gt(assistantActionApprovals.expiresAt, now),
+    ));
+  }
+
+  async claimAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<AssistantActionApproval | undefined> {
+    const rows = await this.db.update(assistantActionApprovals)
+      .set({ claimedAt: now })
+      .where(and(
+        eq(assistantActionApprovals.id, id),
+        eq(assistantActionApprovals.userId, userId),
+        eq(assistantActionApprovals.conversationId, conversationId),
+        isNull(assistantActionApprovals.claimedAt),
+        gt(assistantActionApprovals.expiresAt, now),
+      ))
+      .returning();
+    return rows[0];
+  }
+
+  async cancelAssistantActionApproval(id: string, userId: number, conversationId: number, now: Date): Promise<boolean> {
+    const claimed = await this.claimAssistantActionApproval(id, userId, conversationId, now);
+    return !!claimed;
   }
 
   // User file methods
@@ -1602,6 +1710,25 @@ export class DbStorage implements IStorage {
     return rows[0];
   }
 
+  async applyPlan(id: number, eventsToInsert: InsertEvent[], startDate: Date): Promise<{ plan: Plan; events: Event[] } | undefined> {
+    return this.db.transaction(async (tx) => {
+      // The conditional update is the atomic claim. Concurrent requests that
+      // lose the draft -> applied transition receive no row and create no events.
+      const claimed = await tx.update(plans)
+        .set({ status: "applied", appliedAt: new Date(), startDate })
+        .where(and(eq(plans.id, id), eq(plans.status, "draft")))
+        .returning();
+      if (claimed.length === 0) return undefined;
+
+      const createdEvents: Event[] = [];
+      for (const eventData of eventsToInsert) {
+        const rows = await tx.insert(events).values(eventData).returning();
+        createdEvents.push(rows[0]);
+      }
+      return { plan: claimed[0], events: createdEvents };
+    });
+  }
+
   // Proposal methods
   async getProposal(id: number): Promise<Proposal | undefined> {
     const rows = await this.db.select().from(proposals).where(eq(proposals.id, id)).limit(1);
@@ -1682,4 +1809,3 @@ export class DbStorage implements IStorage {
 // for explicitly selected tests or demonstrations via MEM_STORAGE=1.
 export const storage: IStorage =
   process.env.MEM_STORAGE === "1" ? new MemStorage() : new DbStorage(getDb());
-

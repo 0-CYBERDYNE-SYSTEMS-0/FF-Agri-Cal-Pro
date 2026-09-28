@@ -81,7 +81,13 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
+                minLength={mode === "register" ? 12 : undefined}
+                maxLength={mode === "register" ? 72 : undefined}
+                required
               />
+              {mode === "register" && (
+                <p className="text-xs text-neutral-500">Use at least 12 characters and no more than 72 UTF-8 bytes.</p>
+              )}
             </div>
             <Button type="submit" className="w-full bg-primary hover:bg-primary-dark" disabled={isLoading}>
               {isLoading ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}

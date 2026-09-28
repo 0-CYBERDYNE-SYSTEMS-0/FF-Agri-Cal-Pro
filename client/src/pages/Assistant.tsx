@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { useToast } from "@/hooks/use-toast";
-import { createConversation, sendChatMessage, getTimeZone, ChatResponse, invalidateMutatedQueries } from "@/lib/openAiApi";
+import { createConversation, sendChatMessage, getTimeZone, ChatResponse, invalidateMutatedQueries, confirmAssistantAction, cancelAssistantAction, ConversationWithPendingActions } from "@/lib/openAiApi";
+import AssistantActionApprovals from "@/components/assistant/AssistantActionApprovals";
 import { useLocation } from "@/contexts/LocationContext";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -28,6 +29,7 @@ export default function Assistant() {
   const [input, setInput] = useState("");
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [isLoadingResponse, setIsLoadingResponse] = useState(false);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -41,7 +43,7 @@ export default function Assistant() {
   });
   
   // Get active conversation
-  const { data: activeConversation, isLoading: isLoadingActiveConversation } = useQuery<Conversation>({
+  const { data: activeConversation, isLoading: isLoadingActiveConversation } = useQuery<ConversationWithPendingActions>({
     queryKey: ["/api/conversations", activeConversationId],
     queryFn: async () => {
       if (!activeConversationId) return null;
@@ -127,6 +129,34 @@ export default function Assistant() {
   
   const handleNewConversation = () => {
     createConversationMutation.mutate();
+  };
+
+  const handleApproveAction = async (actionId: string) => {
+    if (!activeConversationId) return;
+    setBusyActionId(actionId);
+    try {
+      const result = await confirmAssistantAction(activeConversationId, actionId);
+      if (result.conversation) queryClient.setQueryData(["/api/conversations", activeConversationId], result.conversation);
+      invalidateMutatedQueries(queryClient, { mutations: result.mutation ? [result.mutation] : [] });
+      toast({ title: result.success ? "Action completed" : "Action needs attention", description: result.message });
+    } catch (error) {
+      toast({ title: "Could not approve action", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleDismissAction = async (actionId: string) => {
+    if (!activeConversationId) return;
+    setBusyActionId(actionId);
+    try {
+      await cancelAssistantAction(activeConversationId, actionId);
+      await queryClient.invalidateQueries({ queryKey: ["/api/conversations", activeConversationId] });
+    } catch (error) {
+      toast({ title: "Could not dismiss action", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setBusyActionId(null);
+    }
   };
   
   const handleSelectConversation = (id: number) => {
@@ -252,6 +282,13 @@ export default function Assistant() {
                   )}
                 </div>
               ))}
+
+              <AssistantActionApprovals
+                actions={activeConversation?.pendingActions ?? []}
+                busyActionId={busyActionId}
+                onApprove={handleApproveAction}
+                onDismiss={handleDismissAction}
+              />
               
               {isLoadingResponse && (
                 <div className="flex items-start">

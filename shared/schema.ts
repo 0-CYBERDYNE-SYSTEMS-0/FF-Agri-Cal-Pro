@@ -62,6 +62,19 @@ export const conversations = pgTable("conversations", {
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
+// One-time, expiring server-side approvals for assistant-initiated actions.
+// The conditional claimedAt update is the replay/concurrency boundary.
+export const assistantActionApprovals = pgTable("assistant_action_approvals", {
+  id: text("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  conversationId: integer("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  toolCall: json("tool_call").notNull(),
+  summary: text("summary").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  claimedAt: timestamp("claimed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // User files table for document management
 export const userFiles = pgTable("user_files", {
   id: serial("id").primaryKey(),
@@ -254,6 +267,15 @@ export const insertConversationSchema = createInsertSchema(conversations).pick({
   messages: true
 });
 
+export const insertAssistantActionApprovalSchema = createInsertSchema(assistantActionApprovals).pick({
+  id: true,
+  userId: true,
+  conversationId: true,
+  toolCall: true,
+  summary: true,
+  expiresAt: true,
+});
+
 export const insertUserFileSchema = createInsertSchema(userFiles).pick({
   userId: true,
   projectId: true,
@@ -377,6 +399,8 @@ export type InsertEvent = z.infer<typeof insertEventSchema>;
 
 export type Conversation = typeof conversations.$inferSelect;
 export type InsertConversation = z.infer<typeof insertConversationSchema>;
+export type AssistantActionApproval = typeof assistantActionApprovals.$inferSelect;
+export type InsertAssistantActionApproval = z.infer<typeof insertAssistantActionApprovalSchema>;
 
 export type UserFile = typeof userFiles.$inferSelect;
 export type InsertUserFile = z.infer<typeof insertUserFileSchema>;

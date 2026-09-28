@@ -21,6 +21,23 @@ export interface ChatMutation {
 export interface ChatResponse {
   conversation: Conversation;
   mutations: ChatMutation[];
+  pendingActions?: PendingAssistantAction[];
+}
+
+export interface PendingAssistantAction {
+  id: string;
+  summary: string;
+  expiresAt: number;
+}
+
+export type ConversationWithPendingActions = Conversation & { pendingActions?: PendingAssistantAction[] };
+
+export interface AssistantActionResult {
+  success: boolean;
+  message: string;
+  mutation?: ChatMutation;
+  conversation?: ConversationWithPendingActions;
+  pendingActions: PendingAssistantAction[];
 }
 
 export function getTimeZone(): string {
@@ -31,14 +48,9 @@ export function getTimeZone(): string {
   }
 }
 
-export async function createConversation(greeting: string): Promise<Conversation> {
+export async function createConversation(_greeting = ""): Promise<Conversation> {
   const response = await apiRequest("POST", "/api/conversations", {
-    messages: [
-      {
-        role: "assistant",
-        content: greeting
-      }
-    ]
+    messages: []
   });
   return response.json();
 }
@@ -56,9 +68,19 @@ export async function sendChatMessage(
   return response.json();
 }
 
+export async function confirmAssistantAction(conversationId: number, actionId: string): Promise<AssistantActionResult> {
+  const response = await apiRequest("POST", `/api/conversations/${conversationId}/actions/${encodeURIComponent(actionId)}/confirm`, {});
+  return response.json();
+}
+
+export async function cancelAssistantAction(conversationId: number, actionId: string): Promise<{ pendingActions: PendingAssistantAction[] }> {
+  const response = await apiRequest("POST", `/api/conversations/${conversationId}/actions/${encodeURIComponent(actionId)}/cancel`, {});
+  return response.json();
+}
+
 // Invalidates the queries affected by a chat turn's saved mutations so both
 // chat surfaces refresh events, projects, and documents from the results.
-export function invalidateMutatedQueries(queryClient: QueryClient, data: ChatResponse): void {
+export function invalidateMutatedQueries(queryClient: QueryClient, data: Pick<ChatResponse, "mutations">): void {
   const mutations = data.mutations ?? [];
   if (mutations.some(m => m.type.endsWith("_event"))) {
     queryClient.invalidateQueries({ queryKey: ["/api/events"] });
