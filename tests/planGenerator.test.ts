@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { draftPlan, PlanGenerationError } from "../server/planGenerator";
+import { EVENT_NOTES_STANDARD } from "../server/notesStandard";
 
 const REQUEST = {
   goal: "plant a fall vegetable garden",
@@ -124,4 +125,25 @@ test("the loop limit surfaces as an explicit error", async () => {
     () => draftPlan(REQUEST, { createMessages: endless, search: async () => ({ content: "x", citations: [] }) }),
     /limit/i
   );
+});
+
+test("the plan prompt carries the shared event notes standard", async () => {
+  let systemPrompt = "";
+  const scripted = async (messages: any[]) => {
+    systemPrompt = messages[0].content;
+    return {
+      toolCalls: [
+        toolCall("c1", "submit_plan", {
+          title: "One step",
+          events: [{ title: "Prep beds", offsetDays: 0 }],
+          summary: "Prep.",
+        }),
+      ],
+      content: null,
+    };
+  };
+
+  await draftPlan(REQUEST, { createMessages: scripted, search: async () => ({ content: "", citations: [] }) });
+
+  assert.ok(systemPrompt.includes(EVENT_NOTES_STANDARD));
 });
