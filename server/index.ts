@@ -9,8 +9,10 @@ import { registerRoutes } from "./routes";
 import { startScheduler } from "./scheduler";
 import { setupVite, serveStatic, log } from "./vite";
 import { checkDatabaseConnection, getPool, hasDatabase } from "../db";
+import { resolveSessionSecret } from "./sessionConfig";
 
 const app = express();
+const sessionSecret = resolveSessionSecret();
 
 // Trust the first proxy so `secure` session cookies work behind TLS-terminating
 // proxies (req.protocol/req.ip reflect X-Forwarded-* headers).
@@ -98,7 +100,6 @@ app.use((req, res, next) => {
       })
     : undefined;
 
-  const sessionSecret = process.env.SESSION_SECRET || "dev-secret-change-in-production-" + Date.now();
   app.use(session({
     store: sessionStore,
     secret: sessionSecret,

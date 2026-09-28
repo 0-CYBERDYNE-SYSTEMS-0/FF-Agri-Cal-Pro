@@ -8,7 +8,8 @@ import { Conversation, Event } from "@shared/schema";
 import MarkdownRenderer from "@/components/ui/markdown-renderer";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { downloadICSFile } from "@/lib/calendarUtils";
-import { createConversation, sendChatMessage, getTimeZone, ChatResponse, invalidateMutatedQueries } from "@/lib/openAiApi";
+import { createConversation, sendChatMessage, getTimeZone, ChatResponse, invalidateMutatedQueries, confirmAssistantAction, cancelAssistantAction, ConversationWithPendingActions } from "@/lib/openAiApi";
+import AssistantActionApprovals from "@/components/assistant/AssistantActionApprovals";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Download, Info } from "lucide-react";
 import { useLocation } from "@/contexts/LocationContext";
@@ -31,6 +32,7 @@ export default function ChatInterface() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<number | null>(null);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -45,7 +47,7 @@ export default function ChatInterface() {
   });
 
   // Get active conversation
-  const { data: activeConversation, isLoading: isLoadingActiveConversation } = useQuery<Conversation>({
+  const { data: activeConversation, isLoading: isLoadingActiveConversation } = useQuery<ConversationWithPendingActions>({
     queryKey: ["/api/conversations", conversationId],
     queryFn: async () => {
       if (!conversationId) return null;
@@ -177,6 +179,34 @@ export default function ChatInterface() {
     }
   };
 
+  const handleApproveAction = async (actionId: string) => {
+    if (!conversationId) return;
+    setBusyActionId(actionId);
+    try {
+      const result = await confirmAssistantAction(conversationId, actionId);
+      if (result.conversation) queryClient.setQueryData(["/api/conversations", conversationId], result.conversation);
+      invalidateMutatedQueries(queryClient, { mutations: result.mutation ? [result.mutation] : [] });
+      toast({ title: result.success ? "Action completed" : "Action needs attention", description: result.message });
+    } catch (error) {
+      toast({ title: "Could not approve action", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleDismissAction = async (actionId: string) => {
+    if (!conversationId) return;
+    setBusyActionId(actionId);
+    try {
+      await cancelAssistantAction(conversationId, actionId);
+      await queryClient.invalidateQueries({ queryKey: ["/api/conversations", conversationId] });
+    } catch (error) {
+      toast({ title: "Could not dismiss action", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
   return (
     <>
       {/* Fixed chat button at the bottom right */}
@@ -249,6 +279,13 @@ export default function ChatInterface() {
                   )}
                 </div>
               ))}
+
+              <AssistantActionApprovals
+                actions={activeConversation?.pendingActions ?? []}
+                busyActionId={busyActionId}
+                onApprove={handleApproveAction}
+                onDismiss={handleDismissAction}
+              />
 
               {sendMessageMutation.isPending && (
                 <div className="flex items-start">
