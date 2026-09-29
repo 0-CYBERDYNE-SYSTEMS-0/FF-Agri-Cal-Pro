@@ -8,6 +8,7 @@
 import { planPayloadSchema, type PlanPayload } from "@shared/plans";
 import { CHAT_MODEL, TOOL_LOOP_LIMIT, createChatClient } from "./modelConfig";
 import { searchWeb } from "./perplexityApi";
+import { EVENT_NOTES_STANDARD } from "./notesStandard";
 import { fetchComprehensiveWeather, formatWeatherData } from "./openWeatherApi";
 
 export interface PlanDraftRequest {
@@ -122,14 +123,16 @@ Farm time zone: {timeZone}
 WORKFLOW — follow it in order:
 1. RESEARCH FIRST. Before planning, use search_web for the facts that drive timing and rates: variety/breed choices for the goal, the local seasonal window, maturation/gestation periods, spacing and rates, and common failure points. Run several targeted searches. If research is unavailable, say so in the summary and clearly mark unverified timings in the event descriptions — never present guesses as researched facts. Collect source URLs for the plan's sources array.
 2. BUILD THE EVENT LIST. Typically 8-30 events for a season-scale goal (bed prep through harvest/follow-through), fewer for a simple process. Chain steps that depend on biology (germination, gestation, fermentation, maturity) with dependsOnIndex + offsetDays so the plan stays correct if the anchor moves. Use recurring events for repeated care (watering, scouting, turning) rather than dozens of duplicates.
-3. WRITE REAL SOP NOTES. Every event description is Markdown the farmer will follow in the field: what to do step by step, materials and quantities/rates, what conditions to check first, and safety notes where relevant (chemicals, fermentation, machinery, livestock). Two useful sentences beat one vague line; do not pad.
+3. WRITE REAL SOP NOTES to the event notes standard below.
 4. SUBMIT once via submit_plan with every event, sources, and a summary.
 
 Hard rules:
 - dependsOnIndex must reference an EARLIER event (lower index).
 - offsetDays is measured from the anchor (or the dependency's day), never negative.
 - Dates are NOT in the payload — only offsets. The system computes dates.
-- Every event title must be a concrete task ("Sow sugar snap peas in beds 3-4"), not a category.`;
+- Every event title must be a concrete task ("Sow sugar snap peas in beds 3-4"), not a category.
+
+${EVENT_NOTES_STANDARD}`;
 
 function formatAnchorDate(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", {

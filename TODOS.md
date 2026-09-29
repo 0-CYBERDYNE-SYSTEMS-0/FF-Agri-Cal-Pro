@@ -81,3 +81,18 @@ Pillar 3 — the proactive farm manager:
 - Email/push notification channels (in-app inbox only for now)
 - History/yield logging, frost-date & growing-degree intelligence,
   equipment/staff conflict scheduling beyond same-location overlaps
+
+### Handoff checklist (2026-09-28)
+- Deploy: `main` includes the security pass (PR #2), which is not yet
+  deployed. Apply the schema (`npm run db:push`) before starting the new
+  build; it adds `assistant_action_approvals`
+- Production env: `DATABASE_URL`, `SESSION_SECRET` (≥32 bytes, enforced),
+  `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`, optional `CHAT_MODEL`
+- First live model run: judge event notes against `INTENT.md`
+- Security findings still open (see `SECURITY_PENTEST_REPORT.md`): CSP
+  disabled in production, username enumeration at registration, internal
+  error details in responses, location values in geocoding logs, no
+  provider data retention/redaction controls, four moderate dev-only
+  advisories (Drizzle Kit/esbuild)
+- `SECURITY_PENTEST_REPORT.md` / `SECURITY_PENTEST_DASHBOARD.html` contain
+  reproduction steps; review before widening repo access

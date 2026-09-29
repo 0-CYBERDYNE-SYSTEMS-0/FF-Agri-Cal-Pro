@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Read `INTENT.md` first: it is the product contract (agent-driven calendar,
+event notes as field guides, farmer approval for consequential actions).
+`SPEC.md` is a historical record. `TODOS.md` lists shipped work and open gaps.
+
 ## Development Commands
 
 ### Essential Commands
@@ -12,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run start` - Start production server
 - `npm run check` - TypeScript type checking across entire codebase
 - `npm test` - Run the regression suite (node:test, tests/*.test.ts)
+- `npx tsx --test tests/plans.test.ts` - Run a single test file
 - `npm run db:push` - Push database schema changes using Drizzle
 
 ### Database Management
@@ -19,6 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Schema defined in `shared/schema.ts`
 - Requires `DATABASE_URL` environment variable
 - Use `npm run db:push` to apply schema changes
+- `migrations/` also holds drizzle-kit generated SQL (`0000`, `0001`) plus
+  snapshots; keep it in sync when changing `shared/schema.ts`
 
 ## Architecture Overview
 
@@ -62,6 +69,41 @@ This is a monorepo with client-server architecture:
 - Integration with weather and location data for contextual responses
 - Chat interface in `components/assistant/ChatInterface.tsx`
 
+#### Plans & Proactive Agent
+- `server/planGenerator.ts`: researches a goal and drafts a dependency-linked
+  plan via a `submit_plan` tool validated against `shared/plans.ts`; it never
+  writes events — dates resolve only when a plan is applied
+- `server/scheduler.ts` + `server/weatherWatch.ts`: periodic watch comparing
+  scheduled events to the forecast; `weatherWatch` is pure rule evaluation,
+  `scheduler` does I/O and persists `proposals` + `notifications`. The
+  calendar is never changed without the farmer approving a proposal
+- `server/farmContext.ts`: renders farm memory tables into compact context
+  lines for the assistant prompt
+
+#### Event Notes Standard
+- `server/notesStandard.ts` holds the one notes standard (see `INTENT.md`);
+  the chat system prompt (`server/routes.ts`) and the plan prompt
+  (`server/planGenerator.ts`) both embed it — edit it there, not in a prompt
+
+#### Security Boundaries
+- Calendar, farm, file, and research content goes to the model as user-role
+  data, never in the system message; client-supplied history roles are
+  rejected
+- Consequential tool calls and private file reads create expiring, one-time
+  approvals (`assistant_action_approvals` table); the farmer approves
+  them in `components/assistant/AssistantActionApprovals.tsx`
+- Cookie-authenticated API mutations reject cross-origin requests
+- `server/sessionConfig.ts`: production refuses to start without a
+  `SESSION_SECRET` of at least 32 bytes; sessions rotate on login
+- `SECURITY_PENTEST_REPORT.md` records findings, including ones still open
+
+#### Model & Research Config
+- `server/modelConfig.ts`: one model for all chat requests (`CHAT_MODEL` env
+  override), capped tool-loop iterations, deliberately no model fallback
+- `server/perplexityApi.ts`: web research; `searchWeb` throws on any failure
+  (never returns an error string as a result). Env: `PERPLEXITY_API_KEY`,
+  optional `PERPLEXITY_MODEL`, `PERPLEXITY_MAX_TOKENS`, `PERPLEXITY_RECENCY`
+
 #### Weather Integration
 - Real Open-Meteo API integration (not mocked data; no API key required)
 - Location-based weather forecasting
@@ -80,6 +122,7 @@ Key tables (from `shared/schema.ts`):
 - `projects` - Project management with status tracking
 - `events` - Calendar events with project/weather linking
 - `conversations` - AI chat history storage
+- `assistant_action_approvals` - pending one-time approvals for assistant actions
 - Farm memory: `farms`, `fields`, `crops`, `equipment`, `buildings`, `staff`
 - Planning & agent: `plans`, `proposals`, `notifications`, `weather_cache`
 - `session` is created and owned at runtime by connect-pg-simple and is
@@ -102,6 +145,9 @@ Key tables (from `shared/schema.ts`):
 - Tests live in `tests/*.test.ts` and run through tsx (no separate framework)
 - Storage, API, plans, research, recurrence, ICS, weather, and tool schemas
   are covered; add a test alongside behavioral changes
+- Tests set `process.env.MEM_STORAGE = "1"` *before* dynamically importing
+  `server/storage` to use in-memory storage (no database needed); API tests
+  mount `registerRoutes` on a bare express app
 
 ### Theme System
 - Custom theme configuration in `theme.json` files

@@ -1,6 +1,7 @@
 # Calendar reliability specification
 
 Status: historical — the reliability pass (commit bb6b018) implemented this spec, and launch verification on 2026-09-19 confirmed it. Kept as the record of the review.
+Superseded for product direction by `INTENT.md`. Its "do not add background scheduling, agents, a workflow framework" constraint applied to that pass only; the proactive agent and plans were added deliberately afterwards.
 Review date: 2026-09-08, America/Los_Angeles.
 Baseline: `release/v2`, `afafc605c05c7670560a1955ccf5e87d91928e7f`.
 

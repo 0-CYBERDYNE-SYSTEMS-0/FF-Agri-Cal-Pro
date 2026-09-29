@@ -42,6 +42,7 @@ import {
 import { buildFarmContextLines } from "./farmContext";
 import { resolvePlanEvents, planPayloadSchema, PlanResolutionError } from "@shared/plans";
 import { draftPlan, PlanGenerationError } from "./planGenerator";
+import { EVENT_NOTES_STANDARD } from "./notesStandard";
 import type { PlanEventSpec } from "@shared/plans";
 
 // Parses an anchor date for plans: a date-only string ("YYYY-MM-DD") is
@@ -1414,9 +1415,11 @@ For calendar events:
 1. Always include a clear title
 2. Set appropriate start and end times in ISO format (YYYY-MM-DDTHH:MM:SSZ)
 3. Set checkWeather to true for outdoor activities
-4. Include a detailed description with helpful tips — descriptions support Markdown, so for task instructions use structure (steps, materials, quantities, safety notes)
+4. Write the description to the event notes standard below
 5. Set a location when relevant
 6. Use recurringPattern for repeated activities (weekly scouting, every-3-day watering) instead of many duplicate events
+
+${EVENT_NOTES_STANDARD}
 
 When you use web research (search_web), ground your answer in what it returned and cite the source URLs. If research fails or is unavailable, say so plainly — never present invented specifics as researched facts.
 
