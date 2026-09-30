@@ -1,25 +1,50 @@
-
-<div align="center">
-
-
-                       CALENDAR PRO   |   AI POWERED                         
-                                          
-
-
-<h3 align="center">
-<code>// INTELLIGENT AGRICULTURAL CALENDAR WITH AI-DRIVEN INSIGHTS</code>
-</h3>
-
 <p align="center">
-<img src="https://img.shields.io/badge/STATUS-PRODUCTION%20READY-22c55e?style=flat-square&labelColor=000000">
-<img src="https://img.shields.io/badge/AI-POWERED-ff69b4?style=flat-square&labelColor=000000">
-<img src="https://img.shields.io/badge/WEATHER-INTEGRATED-00bfff?style=flat-square&labelColor=000000">
-<img src="https://img.shields.io/badge/BUILT%20WITH-TYPESCRIPT-3178c6?style=flat-square&labelColor=000000">
+  <img src="docs/readme/hero.png" alt="A week on the calendar: mow headlands, soil sampling, scout the north field, an irrigation repair, fertigate, market day." width="100%">
 </p>
 
-</div>
+# FF Agri-Cal
 
----
+Plan the season. The forecast does the watching.
+
+You put the field work on the calendar. The forecast for your place sits beside it, and the weather page shows which of today's jobs depend on it.
+
+![The weather page for one place: today's reading, what it means for the work, and the job that depends on it](docs/readme/app.png)
+
+## What you can do
+
+- Put field work on a calendar — day, week, month, or year.
+- Keep projects beside it: a field, a planting, a block of beds.
+- See the forecast for your own place, and what it means for today's work.
+- Import a calendar file you already keep (.ics).
+- Ask the assistant, and keep the answers with the calendar.
+
+## What it will not do
+
+- It does not switch a valve, start a pump, or move water. It is a calendar, a forecast, and a notebook.
+- It does not guess your place. Set the location, or the forecast is not yours.
+
+## Run it
+
+You need [Node.js](https://nodejs.org) 20 or newer and PostgreSQL.
+
+```sh
+git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FF-Agri-Cal-Pro.git
+cd FF-Agri-Cal-Pro
+npm install
+cp .env.example .env     # set DATABASE_URL; set SESSION_SECRET if it is on the internet
+npm run db:push
+npm run dev
+```
+
+The app opens on port 5001 and its server runs on port 3000. The forecast needs no key — it comes from Open-Meteo. The assistant needs `OPENAI_API_KEY`.
+
+To look around without a database, set `MEM_STORAGE=1` in `.env` and skip `db:push`. Nothing is saved.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Developer reference
 
 ## `> PROJECT_OVERVIEW`
 ```typescript
