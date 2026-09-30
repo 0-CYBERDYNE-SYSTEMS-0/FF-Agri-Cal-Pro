@@ -41,6 +41,7 @@ To look around without a database, set `MEM_STORAGE=1` in `.env` and skip `db:pu
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 ## Developer reference
 
 ## `> PROJECT_OVERVIEW`
