@@ -4,11 +4,9 @@
 
 # FF Agri-Cal
 
-Plan the season. The forecast does the watching.
+You put the field work on the calendar. The forecast sits beside it, and the weather page names the jobs that weather can move.
 
-You put the field work on the calendar. The forecast for your place sits beside it, and the weather page shows which of today's jobs depend on it.
-
-![The weather page for one place: today's reading, what it means for the work, and the job that depends on it](docs/readme/app.png)
+![The weather page for the place you set: today's reading, and the job that depends on it](docs/readme/app.png)
 
 ## What you can do
 
@@ -43,7 +41,6 @@ To look around without a database, set `MEM_STORAGE=1` in `.env` and skip `db:pu
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
 ## Developer reference
 
 ## `> PROJECT_OVERVIEW`
