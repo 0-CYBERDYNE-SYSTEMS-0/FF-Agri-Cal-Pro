@@ -1838,7 +1838,8 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
           const response = await chat.chat.completions.create({
             model: CHAT_MODEL,
             messages: apiMessages,
-            tools
+            tools,
+            store: false,
           });
 
           const choice = response.choices[0]?.message;
