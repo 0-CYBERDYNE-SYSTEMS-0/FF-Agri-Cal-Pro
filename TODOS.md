@@ -79,8 +79,8 @@ Pillar 3 — the proactive farm manager:
 - Password reset flow (registration UI exists)
 - Mobile polish for small screens
 - Email/push notification channels (in-app inbox only for now)
-- History/yield logging, frost-date & growing-degree intelligence,
-  equipment/staff conflict scheduling beyond same-location overlaps
+- History/yield logging, equipment/staff conflict scheduling beyond
+  same-location overlaps
 
 ### Handoff checklist (2026-09-28)
 - Deploy: `main` includes the security pass (PR #2), which is not yet

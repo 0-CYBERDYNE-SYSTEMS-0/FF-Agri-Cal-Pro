@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { WeatherForecast } from '@shared/schema';
+import type { GddWeatherDay } from './frostGdd';
 
 // Cache for weather data
 const weatherCache: Record<string, { data: WeatherForecast[], timestamp: number }> = {};
@@ -30,6 +31,58 @@ export interface WeatherResponse {
   fetchedAt: string;
   current: WeatherForecast;
   forecast: WeatherForecast[];
+}
+
+function dateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export async function fetchGrowingDegreeWeather(
+  locationInput: string | { lat: number; lon: number },
+  startDate: Date,
+  endDate: Date
+): Promise<GddWeatherDay[] | null> {
+  try {
+    let lat: number;
+    let lon: number;
+
+    if (typeof locationInput === 'string') {
+      const geocoded = await geocodeLocation(locationInput);
+      if (!geocoded) return null;
+      lat = geocoded.lat;
+      lon = geocoded.lon;
+    } else {
+      lat = locationInput.lat;
+      lon = locationInput.lon;
+    }
+
+    const response = await axios.get('https://archive-api.open-meteo.com/v1/archive', {
+      params: {
+        latitude: lat,
+        longitude: lon,
+        start_date: dateOnly(startDate),
+        end_date: dateOnly(endDate),
+        daily: 'temperature_2m_min,temperature_2m_max',
+        temperature_unit: 'fahrenheit',
+        timezone: 'auto',
+      },
+    });
+    const daily = response.data?.daily;
+    if (!Array.isArray(daily?.time) || !Array.isArray(daily?.temperature_2m_min) || !Array.isArray(daily?.temperature_2m_max)) {
+      return null;
+    }
+
+    return daily.time.flatMap((date: unknown, index: number) => {
+      const tempMin = daily.temperature_2m_min[index];
+      const tempMax = daily.temperature_2m_max[index];
+      return typeof date === 'string' && typeof tempMin === 'number' && typeof tempMax === 'number'
+        ? [{ date, tempMin, tempMax }]
+        : [];
+    });
+  } catch {
+    console.error('Error fetching growing degree weather');
+    return null;
+  }
 }
 
 // Pure mapping from a fetched weather result to the API wire format.
