@@ -89,10 +89,21 @@ Pillar 3 — the proactive farm manager:
 - Production env: `DATABASE_URL`, `SESSION_SECRET` (≥32 bytes, enforced),
   `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`, optional `CHAT_MODEL`
 - First live model run: judge event notes against `INTENT.md`
-- Security findings still open (see `SECURITY_PENTEST_REPORT.md`): CSP
-  disabled in production, username enumeration at registration, internal
-  error details in responses, location values in geocoding logs, no
-  provider data retention/redaction controls, four moderate dev-only
-  advisories (Drizzle Kit/esbuild)
+- Security findings closed on `security/close-open-findings`: production CSP,
+  registration username enumeration, internal error details in responses,
+  location values in geocoding logs, and provider request retention/redaction
+  controls
+- Development dependency advisories (npm audit, 2026-10-02): no non-breaking
+  remediation is available; these tooling/build risks are formally accepted
+  for this branch pending a dedicated dependency upgrade:
+  - Risk accepted: `@esbuild-kit/core-utils` (moderate, transitive esbuild advisory)
+  - Risk accepted: `@esbuild-kit/esm-loader` (moderate, transitive esbuild advisory)
+  - Risk accepted: `braces` (high, transitive Tailwind build advisory)
+  - Risk accepted: `chokidar` (high, transitive Tailwind build advisory)
+  - Risk accepted: `drizzle-kit` (moderate, development database tooling advisory)
+  - Risk accepted: `esbuild` (moderate, transitive development build advisory)
+  - Risk accepted: `fast-glob` (high, transitive Tailwind build advisory)
+  - Risk accepted: `micromatch` (high, transitive Tailwind build advisory)
+  - Risk accepted: `tailwindcss` (high, development build tooling advisory)
 - `SECURITY_PENTEST_REPORT.md` / `SECURITY_PENTEST_DASHBOARD.html` contain
   reproduction steps; review before widening repo access
