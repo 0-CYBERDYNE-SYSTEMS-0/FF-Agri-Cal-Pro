@@ -296,18 +296,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingUser = await storage.getUserByUsername(userData.username);
 
       if (existingUser) {
-        return res.status(409).json({ message: "Username already exists" });
+        return res.status(201).json({ message: "Registration request received" });
       }
 
       // Hash the password before storing
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(userData.password, salt);
 
-      const user = await storage.createUser({ ...userData, password: hashedPassword });
-      // Don't return password in response
-      const { password, ...userResponse } = user;
-
-      return res.status(201).json(userResponse);
+      await storage.createUser({ ...userData, password: hashedPassword });
+      return res.status(201).json({ message: "Registration request received" });
     } catch (err) {
       return handleApiError(err, res);
     }
