@@ -122,7 +122,7 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
     }
 
     // If Open-Meteo fails, try Nominatim
-    console.log(`Open-Meteo geocoding failed for ${location}, trying Nominatim...`);
+    console.log('Open-Meteo geocoding failed, trying Nominatim...');
     const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
     const nominatimResponse = await axios.get(nominatimUrl, {
       headers: {
@@ -144,10 +144,10 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
       };
     }
 
-    console.log(`No geocoding results found for location: ${location}`);
+    console.log('No geocoding results found');
     return null;
-  } catch (error) {
-    console.error('Error in geocoding:', error);
+  } catch {
+    console.error('Error in geocoding');
     return null;
   }
 }
@@ -158,7 +158,7 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
  */
 export async function reverseGeocodeCoordinates(lat: number, lon: number): Promise<GeocodingResult | null> {
   try {
-    console.log(`Reverse geocoding coordinates: ${lat}, ${lon}`);
+    console.log('Reverse geocoding coordinates');
     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`;
     const response = await axios.get(nominatimUrl, {
       headers: {
@@ -177,7 +177,7 @@ export async function reverseGeocodeCoordinates(lat: number, lon: number): Promi
       if (state) resolvedName += `, ${state}`;
       if (country && country !== 'United States') resolvedName += `, ${country}`;
       
-      console.log(`Reverse geocoded to: ${resolvedName}`);
+      console.log('Reverse geocoding completed');
       
       return {
         name: city,
@@ -190,10 +190,10 @@ export async function reverseGeocodeCoordinates(lat: number, lon: number): Promi
       };
     }
 
-    console.log(`No reverse geocoding results for coordinates: ${lat}, ${lon}`);
+    console.log('No reverse geocoding results');
     return null;
-  } catch (error) {
-    console.error('Error in reverse geocoding:', error);
+  } catch {
+    console.error('Error in reverse geocoding');
     return null;
   }
 }
@@ -237,7 +237,7 @@ export async function fetchComprehensiveWeather(
     if (typeof locationInput === 'string') {
       const geocodingResult = await geocodeLocation(locationInput);
       if (!geocodingResult) {
-        console.log(`Could not geocode location: ${locationInput}`);
+        console.log('Could not geocode location');
         return null;
       }
       lat = geocodingResult.lat;
@@ -272,7 +272,7 @@ export async function fetchComprehensiveWeather(
       timezone: 'auto',
     };
 
-    console.log(`Fetching fresh weather data for ${resolvedLocationName} (${lat}, ${lon})`);
+    console.log('Fetching fresh weather data');
     const response = await axios.get(openMeteoUrl, { params });
     const apiData = response.data;
 
@@ -360,18 +360,15 @@ export async function fetchComprehensiveWeather(
     // Cache the data
     weatherCache[cacheKey] = { data: forecasts, timestamp: now };
 
-    console.log(`Weather data processed for ${resolvedLocationName}`);
+    console.log('Weather data processed');
     return {
       locationName: resolvedLocationName,
       fetchedAt: new Date(now).toISOString(),
       forecasts
     };
 
-  } catch (error) {
-    console.error(`Error fetching or processing weather data:`, error);
-    if (axios.isAxiosError(error)) {
-      console.error('Axios error details:', error.response?.data);
-    }
+  } catch {
+    console.error('Error fetching or processing weather data');
     return null;
   }
 }
@@ -486,8 +483,8 @@ export function getAgricultureRecommendations(weatherData: {
     
     return recommendations;
     
-  } catch (error) {
-    console.error('Error generating agricultural recommendations:', error);
+  } catch {
+    console.error('Error generating agricultural recommendations');
     return 'Unable to generate agricultural recommendations at this time.';
   }
 }
