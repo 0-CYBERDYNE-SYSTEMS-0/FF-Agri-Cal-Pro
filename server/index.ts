@@ -10,6 +10,7 @@ import { startScheduler } from "./scheduler";
 import { setupVite, serveStatic, log } from "./vite";
 import { checkDatabaseConnection, getPool, hasDatabase } from "../db";
 import { resolveSessionSecret } from "./sessionConfig";
+import { getHelmetOptions } from "./securityHeaders";
 
 const app = express();
 const sessionSecret = resolveSessionSecret();
@@ -21,9 +22,7 @@ app.set("trust proxy", 1);
 // --- Security Middleware ---
 
 // Helmet: secure HTTP headers
-app.use(helmet({
-  contentSecurityPolicy: false, // Allow Vite HMR in dev
-}));
+app.use(helmet(getHelmetOptions()));
 
 // CORS: restrict cross-origin requests
 app.use(cors({
