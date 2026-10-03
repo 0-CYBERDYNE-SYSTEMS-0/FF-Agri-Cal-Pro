@@ -116,13 +116,8 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    // Don't leak error details in production
-    const response = process.env.NODE_ENV === "production"
-      ? { message: "Internal Server Error" }
-      : { message, status };
-    res.status(status).json(response);
-    console.error("Server error:", err.message);
+    res.status(status).json({ message: "Internal Server Error" });
+    console.error("Server error:", err);
   });
 
   // Setup Vite in development, serve static in production

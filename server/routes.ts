@@ -239,7 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ message: validationError.message });
     }
 
-    return res.status(500).json({ message: err.message || "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   };
 
   // Auth middleware: every private route requires a session user
@@ -786,7 +786,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const searchResults = await searchWeb(query);
       return res.status(200).json({ results: searchResults });
     } catch (err: any) {
-      return res.status(502).json({ message: err.message || "Web search failed" });
+      console.error("Web search failed:", err);
+      return res.status(502).json({ message: "Web search failed" });
     }
   });
 
@@ -866,7 +867,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const result = await searchWeb(String(rawArgs.query ?? ""));
           return { content: JSON.stringify({ success: true, content: result.content, citations: result.citations }) };
         } catch (error: unknown) {
-          return failure(error instanceof Error ? error.message : "Web research failed");
+          console.error("Web research failed:", error);
+          return failure("Web research failed");
         }
       }
 
@@ -1932,13 +1934,13 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       if (upstreamError) {
         if (mutations.length === 0) {
           return res.status(502).json({
-            message: `The assistant model request failed: ${upstreamError}. No changes were saved.`
+            message: "The assistant model request failed. No changes were saved."
           });
         }
         // An upstream failure after successful writes must expose those writes
         // as completed; retrying will not duplicate them.
         finalText =
-          `The assistant service failed partway through this request (${upstreamError}). ` +
+          "The assistant service failed partway through this request. " +
           `Changes that were already saved: ${describeMutations(mutations.filter(m => m.ok))}. ` +
           `They are complete; retrying the same request will not duplicate them.`;
       }
@@ -2538,8 +2540,8 @@ Try to be helpful by suggesting optimal timing for agricultural activities based
       } catch (error) {
         // Any failure inside generation (missing key, model outage, no valid
         // submission) is an upstream failure: report it, save nothing.
-        const message = error instanceof Error ? error.message : "Plan generation failed";
-        return res.status(502).json({ message });
+        console.error("Plan generation failed:", error);
+        return res.status(502).json({ message: "Plan generation failed" });
       }
 
       const plan = await storage.createPlan({
