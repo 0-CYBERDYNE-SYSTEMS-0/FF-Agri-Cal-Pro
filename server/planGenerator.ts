@@ -146,7 +146,7 @@ function formatAnchorDate(date: Date, timeZone: string): string {
 
 async function defaultCreateMessages(messages: unknown[], tools: unknown[]) {
   const chat = await createChatClient();
-  const response = await chat.chat.completions.create({ model: CHAT_MODEL, messages, tools } as never);
+  const response = await chat.chat.completions.create({ model: CHAT_MODEL, messages, tools, store: false } as never);
   const choice = response.choices[0]?.message;
   const toolCalls = (choice?.tool_calls ?? []).map(call => ({
     id: call.id,

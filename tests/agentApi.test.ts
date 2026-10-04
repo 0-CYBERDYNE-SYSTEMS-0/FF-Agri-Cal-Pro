@@ -197,3 +197,53 @@ test("proposals and notifications are user-scoped", async () => {
     sessionUserId = testUser.id;
   }
 });
+
+test("the watch creates frost and growing-degree proposals without changing the calendar", async () => {
+  const crop = await storage.createCrop({
+    userId: testUser.id,
+    fieldId: null,
+    name: "Tomatoes",
+    variety: null,
+    plantedAt: new Date("2026-09-01T00:00:00Z"),
+    expectedHarvestAt: null,
+    status: "growing",
+    notes: null,
+  });
+  const event = await plantingEvent("2026-09-15");
+  const frostForecast = {
+    ...RAINY_FORECAST,
+    forecast: [
+      { ...RAINY_FORECAST.forecast[0], date: "2026-09-15", temp_min: 30, temp_max: 55, weatherDescription: "Frost" },
+      { ...RAINY_FORECAST.forecast[0], date: "2026-09-16", temp_min: 45, temp_max: 65, weatherDescription: "Clear" },
+    ],
+  };
+
+  const result = await runWeatherWatch({
+    userId: testUser.id,
+    fetchForecast: async () => frostForecast as any,
+    fetchGddWeather: async () => [
+      { date: "2026-09-01", tempMin: 50, tempMax: 80 },
+      { date: "2026-09-02", tempMin: 55, tempMax: 85 },
+    ],
+    now: new Date(2026, 8, 10, 8, 0),
+  });
+
+  assert.equal(result.proposalsCreated, 2);
+  const pending = await json("GET", "/api/proposals?status=pending");
+  const frost = pending.body.find((proposal: any) => proposal.type === "weather_risk");
+  const gdd = pending.body.find((proposal: any) => proposal.type === "info" && proposal.evidence?.kind === "gdd");
+  assert.ok(frost);
+  assert.ok(gdd);
+  assert.equal(gdd.evidence.cropId, crop.id);
+  assert.match(gdd.rationale, /estimate/);
+
+  const before = await json("GET", `/api/events/${event.id}`);
+  assert.equal(new Date(before.body.startDate).getDate(), 15);
+  await json("POST", `/api/proposals/${frost.id}/approve`);
+  const after = await json("GET", `/api/events/${event.id}`);
+  assert.equal(new Date(after.body.startDate).getDate(), 16);
+
+  const approvedGdd = await json("POST", `/api/proposals/${gdd.id}/approve`);
+  assert.equal(approvedGdd.status, 200);
+  assert.deepEqual(approvedGdd.body.appliedEvents, []);
+});

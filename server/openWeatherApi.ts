@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { WeatherForecast } from '@shared/schema';
+import type { GddWeatherDay } from './frostGdd';
 
 // Cache for weather data
 const weatherCache: Record<string, { data: WeatherForecast[], timestamp: number }> = {};
@@ -30,6 +31,58 @@ export interface WeatherResponse {
   fetchedAt: string;
   current: WeatherForecast;
   forecast: WeatherForecast[];
+}
+
+function dateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export async function fetchGrowingDegreeWeather(
+  locationInput: string | { lat: number; lon: number },
+  startDate: Date,
+  endDate: Date
+): Promise<GddWeatherDay[] | null> {
+  try {
+    let lat: number;
+    let lon: number;
+
+    if (typeof locationInput === 'string') {
+      const geocoded = await geocodeLocation(locationInput);
+      if (!geocoded) return null;
+      lat = geocoded.lat;
+      lon = geocoded.lon;
+    } else {
+      lat = locationInput.lat;
+      lon = locationInput.lon;
+    }
+
+    const response = await axios.get('https://archive-api.open-meteo.com/v1/archive', {
+      params: {
+        latitude: lat,
+        longitude: lon,
+        start_date: dateOnly(startDate),
+        end_date: dateOnly(endDate),
+        daily: 'temperature_2m_min,temperature_2m_max',
+        temperature_unit: 'fahrenheit',
+        timezone: 'auto',
+      },
+    });
+    const daily = response.data?.daily;
+    if (!Array.isArray(daily?.time) || !Array.isArray(daily?.temperature_2m_min) || !Array.isArray(daily?.temperature_2m_max)) {
+      return null;
+    }
+
+    return daily.time.flatMap((date: unknown, index: number) => {
+      const tempMin = daily.temperature_2m_min[index];
+      const tempMax = daily.temperature_2m_max[index];
+      return typeof date === 'string' && typeof tempMin === 'number' && typeof tempMax === 'number'
+        ? [{ date, tempMin, tempMax }]
+        : [];
+    });
+  } catch {
+    console.error('Error fetching growing degree weather');
+    return null;
+  }
 }
 
 // Pure mapping from a fetched weather result to the API wire format.
@@ -122,7 +175,7 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
     }
 
     // If Open-Meteo fails, try Nominatim
-    console.log(`Open-Meteo geocoding failed for ${location}, trying Nominatim...`);
+    console.log('Open-Meteo geocoding failed, trying Nominatim...');
     const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
     const nominatimResponse = await axios.get(nominatimUrl, {
       headers: {
@@ -144,10 +197,10 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
       };
     }
 
-    console.log(`No geocoding results found for location: ${location}`);
+    console.log('No geocoding results found');
     return null;
-  } catch (error) {
-    console.error('Error in geocoding:', error);
+  } catch {
+    console.error('Error in geocoding');
     return null;
   }
 }
@@ -158,7 +211,7 @@ export async function geocodeLocation(location: string): Promise<GeocodingResult
  */
 export async function reverseGeocodeCoordinates(lat: number, lon: number): Promise<GeocodingResult | null> {
   try {
-    console.log(`Reverse geocoding coordinates: ${lat}, ${lon}`);
+    console.log('Reverse geocoding coordinates');
     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`;
     const response = await axios.get(nominatimUrl, {
       headers: {
@@ -177,7 +230,7 @@ export async function reverseGeocodeCoordinates(lat: number, lon: number): Promi
       if (state) resolvedName += `, ${state}`;
       if (country && country !== 'United States') resolvedName += `, ${country}`;
       
-      console.log(`Reverse geocoded to: ${resolvedName}`);
+      console.log('Reverse geocoding completed');
       
       return {
         name: city,
@@ -190,10 +243,10 @@ export async function reverseGeocodeCoordinates(lat: number, lon: number): Promi
       };
     }
 
-    console.log(`No reverse geocoding results for coordinates: ${lat}, ${lon}`);
+    console.log('No reverse geocoding results');
     return null;
-  } catch (error) {
-    console.error('Error in reverse geocoding:', error);
+  } catch {
+    console.error('Error in reverse geocoding');
     return null;
   }
 }
@@ -237,7 +290,7 @@ export async function fetchComprehensiveWeather(
     if (typeof locationInput === 'string') {
       const geocodingResult = await geocodeLocation(locationInput);
       if (!geocodingResult) {
-        console.log(`Could not geocode location: ${locationInput}`);
+        console.log('Could not geocode location');
         return null;
       }
       lat = geocodingResult.lat;
@@ -272,7 +325,7 @@ export async function fetchComprehensiveWeather(
       timezone: 'auto',
     };
 
-    console.log(`Fetching fresh weather data for ${resolvedLocationName} (${lat}, ${lon})`);
+    console.log('Fetching fresh weather data');
     const response = await axios.get(openMeteoUrl, { params });
     const apiData = response.data;
 
@@ -360,18 +413,15 @@ export async function fetchComprehensiveWeather(
     // Cache the data
     weatherCache[cacheKey] = { data: forecasts, timestamp: now };
 
-    console.log(`Weather data processed for ${resolvedLocationName}`);
+    console.log('Weather data processed');
     return {
       locationName: resolvedLocationName,
       fetchedAt: new Date(now).toISOString(),
       forecasts
     };
 
-  } catch (error) {
-    console.error(`Error fetching or processing weather data:`, error);
-    if (axios.isAxiosError(error)) {
-      console.error('Axios error details:', error.response?.data);
-    }
+  } catch {
+    console.error('Error fetching or processing weather data');
     return null;
   }
 }
@@ -486,8 +536,8 @@ export function getAgricultureRecommendations(weatherData: {
     
     return recommendations;
     
-  } catch (error) {
-    console.error('Error generating agricultural recommendations:', error);
+  } catch {
+    console.error('Error generating agricultural recommendations');
     return 'Unable to generate agricultural recommendations at this time.';
   }
 }

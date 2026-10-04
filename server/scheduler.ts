@@ -4,9 +4,10 @@
 // calendar by itself — the farmer approves or declines each proposal.
 import { storage } from "./storage";
 import { expandRecurringEvents, type ExpandedEvent } from "@shared/recurrence";
-import { fetchComprehensiveWeather, formatWeatherData, type WeatherResponse } from "./openWeatherApi";
+import { fetchComprehensiveWeather, fetchGrowingDegreeWeather, formatWeatherData, type WeatherResponse } from "./openWeatherApi";
+import { evaluateCropGrowingDegreeDays } from "./frostGdd";
 import { evaluateWeatherWatch, detectLocationConflicts, type ProposalDraft, type WatchEvent, type WatchForecastDay, type ConflictInput } from "./weatherWatch";
-import type { Event } from "@shared/schema";
+import type { Event, Proposal } from "@shared/schema";
 
 const WATCH_INTERVAL_MS = parseInterval(process.env.AGENT_WATCH_INTERVAL_MINUTES, 6 * 60); // default every 6h
 const INITIAL_DELAY_MS = 45 * 1000;
@@ -22,6 +23,11 @@ export interface WatchRunOptions {
   userId?: number;
   // Injectable forecast fetch so tests never touch the network
   fetchForecast?: (location: string | { lat: number; lon: number }) => Promise<WeatherResponse | null>;
+  fetchGddWeather?: (
+    location: string | { lat: number; lon: number },
+    startDate: Date,
+    endDate: Date
+  ) => Promise<Array<{ date: string; tempMin: number; tempMax: number }> | null>;
   now?: Date;
 }
 
@@ -50,11 +56,12 @@ const defaultFetchForecast = async (location: string | { lat: number; lon: numbe
   return formatWeatherData(data);
 };
 
+const defaultFetchGddWeather = fetchGrowingDegreeWeather;
+
 // Users that already have a pending or declined proposal for an event are
 // not re-notified: declined means "stop asking", pending means "awaiting an
 // answer".
-async function eventIdsWithLiveProposals(userId: number): Promise<Set<number>> {
-  const proposals = await storage.getProposalsByUser(userId);
+function eventIdsWithLiveProposals(proposals: Proposal[]): Set<number> {
   const ids = new Set<number>();
   for (const proposal of proposals) {
     if (proposal.status === "pending" || proposal.status === "declined") {
@@ -68,8 +75,18 @@ async function eventIdsWithLiveProposals(userId: number): Promise<Set<number>> {
   return ids;
 }
 
+function hasLiveOrCurrentGddProposal(proposals: Proposal[], cropId: number, throughDate: string): boolean {
+  return proposals.some(proposal => {
+    const evidence = proposal.evidence && typeof proposal.evidence === "object" ? proposal.evidence as Record<string, unknown> : null;
+    if (proposal.type !== "info" || evidence?.kind !== "gdd" || evidence.cropId !== cropId) return false;
+    if (proposal.status === "pending" || proposal.status === "declined") return true;
+    return proposal.status === "approved" && evidence.throughDate === throughDate;
+  });
+}
+
 export async function runWeatherWatch(options: WatchRunOptions = {}): Promise<WatchRunResult> {
   const fetchForecast = options.fetchForecast ?? defaultFetchForecast;
+  const fetchGddWeather = options.fetchGddWeather ?? defaultFetchGddWeather;
   const now = options.now ?? new Date();
   const result: WatchRunResult = { usersChecked: 0, proposalsCreated: 0, notificationsCreated: 0, skipped: [] };
 
@@ -95,7 +112,8 @@ export async function runWeatherWatch(options: WatchRunOptions = {}): Promise<Wa
         continue;
       }
 
-      const liveProposalIds = await eventIdsWithLiveProposals(userId);
+      const existingProposals = await storage.getProposalsByUser(userId);
+      const liveProposalIds = eventIdsWithLiveProposals(existingProposals);
 
       // Weather watch: only single (non-recurring) future events are movable
       const watchEvents: Event[] = userEvents
@@ -123,7 +141,26 @@ export async function runWeatherWatch(options: WatchRunOptions = {}): Promise<Wa
         draft => !liveProposalIds.has(draft.eventId!)
       );
 
-      for (const draft of [...drafts, ...conflictDrafts]) {
+      const crops = (await storage.getCropsByUser(userId)).filter(
+        crop => crop.plantedAt && (crop.status === "planted" || crop.status === "growing")
+      );
+      let gddDrafts: ProposalDraft[] = [];
+      if (crops.length > 0) {
+        const earliestPlanting = new Date(Math.min(...crops.map(crop => crop.plantedAt!.getTime())));
+        const gddDays = await fetchGddWeather(farmLocation, earliestPlanting, now);
+        if (gddDays) {
+          gddDrafts = crops.flatMap(crop => {
+            const draft = evaluateCropGrowingDegreeDays(crop, gddDays);
+            if (!draft) return [];
+            const throughDate = draft.evidence.throughDate;
+            return typeof throughDate === "string" && !hasLiveOrCurrentGddProposal(existingProposals, crop.id, throughDate)
+              ? [draft]
+              : [];
+          });
+        }
+      }
+
+      for (const draft of [...drafts, ...conflictDrafts, ...gddDrafts]) {
         const proposal = await storage.createProposal({
           userId,
           eventId: draft.eventId,

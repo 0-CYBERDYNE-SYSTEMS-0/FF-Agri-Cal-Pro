@@ -1,6 +1,7 @@
 // Weather-watch rules: pure evaluation of scheduled events against a
 // forecast, producing proposal drafts for the proactive agent. No I/O here —
 // the scheduler feeds events + forecast and persists what comes out.
+import { assessFrostRisk, FROST_TEMP_F } from "./frostGdd";
 
 export interface WatchEvent {
   id: number;
@@ -41,7 +42,6 @@ const PRECIP_INCHES_TRIGGER = 0.2;
 const PRECIP_PROBABILITY_TRIGGER = 60;
 const PRECIP_SUITABLE_INCHES = 0.1;
 const PRECIP_PROBABILITY_SUITABLE = 40;
-const FROST_TEMP_F = 32;
 const WIND_SPRAY_MPH = 25;
 
 const SPRAY_PATTERN = /spray|pesticide|herbicide|fungicide|insecticide|foliar/i;
@@ -81,13 +81,9 @@ function assessRisk(event: WatchEvent, day: WatchForecastDay): RiskAssessment | 
     };
   }
 
-  if (day.tempMin <= FROST_TEMP_F) {
-    return {
-      kind: "frost",
-      reason: `frost risk: overnight low of ${day.tempMin}°F forecast on the scheduled day`,
-      evidence: { forecastDate: day.date, tempMinF: day.tempMin, description: day.description },
-      isSuitable: candidate => candidate.tempMin > FROST_TEMP_F && candidate.precipitation < PRECIP_SUITABLE_INCHES,
-    };
+  const frostRisk = assessFrostRisk(event, day);
+  if (frostRisk) {
+    return { kind: "frost", ...frostRisk };
   }
 
   if (day.windMax >= WIND_SPRAY_MPH && SPRAY_PATTERN.test(title)) {

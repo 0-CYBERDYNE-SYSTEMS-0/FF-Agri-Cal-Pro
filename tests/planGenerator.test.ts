@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { draftPlan, PlanGenerationError } from "../server/planGenerator";
@@ -146,4 +147,54 @@ test("the plan prompt carries the shared event notes standard", async () => {
   await draftPlan(REQUEST, { createMessages: scripted, search: async () => ({ content: "", citations: [] }) });
 
   assert.ok(systemPrompt.includes(EVENT_NOTES_STANDARD));
+});
+
+test("plan provider requests opt out of storage and omit account metadata", async () => {
+  let seenBody: any;
+  const provider = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", chunk => chunks.push(Buffer.from(chunk)));
+    req.on("end", () => {
+      seenBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        choices: [{
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "plan-call-1",
+              type: "function",
+              function: {
+                name: "submit_plan",
+                arguments: JSON.stringify({ title: "Fall Garden", events: [{ title: "Prep beds", offsetDays: 0 }] }),
+              },
+            }],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }));
+    });
+  });
+  await new Promise<void>(resolve => provider.listen(0, "127.0.0.1", resolve));
+
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousBaseUrl = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_API_KEY = "local-plan-key";
+  process.env.OPENAI_BASE_URL = `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`;
+  try {
+    const draft = await draftPlan(REQUEST);
+    assert.equal(draft.title, "Fall Garden");
+    assert.equal(seenBody.store, false);
+    assert.equal(seenBody.username, undefined);
+    assert.equal(seenBody.email, undefined);
+    assert.equal(seenBody.session, undefined);
+    assert.equal(JSON.stringify(seenBody).includes("connect.sid"), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = previousBaseUrl;
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+  }
 });

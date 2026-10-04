@@ -49,6 +49,10 @@ test("a successful search returns content and structured citations", async () =>
   // the last month, and the request must use the configurable model.
   assert.equal(seenBody.search_recency_filter, undefined);
   assert.equal(seenBody.model, "sonar");
+  assert.deepEqual(seenBody.messages[1], { role: "user", content: "sorghum maturity days" });
+  assert.equal(seenBody.username, undefined);
+  assert.equal(seenBody.email, undefined);
+  assert.equal(seenBody.session, undefined);
 });
 
 test("recency filter is only sent when explicitly configured", async () => {
